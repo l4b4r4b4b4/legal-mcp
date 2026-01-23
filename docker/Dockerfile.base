@@ -1,0 +1,102 @@
+# syntax=docker/dockerfile:1.4
+# FastMCP Base Image
+# ==============================================================================
+# A secure, minimal base image for FastMCP servers with mcp-refcache.
+# Other FastMCP servers can extend this image with their own app/ code.
+#
+# Build:
+#   docker build -f docker/Dockerfile.base \
+#     --build-arg PYTHON_VERSION=3.12 \
+#     -t fastmcp-base:latest .
+#
+# Publish to GHCR:
+#   docker tag fastmcp-base:latest ghcr.io/l4b4r4b4b4/legal-mcp-base:latest
+#   docker push ghcr.io/l4b4r4b4b4/legal-mcp-base:latest
+#
+# Usage in other projects:
+#   FROM ghcr.io/l4b4r4b4b4/legal-mcp-base:latest
+#   COPY app/ /app/app/
+#   CMD ["python", "-m", "app", "streamable-http"]
+# ==============================================================================
+
+# Build argument for Python version (default: 3.12)
+# Supports 3.12 and 3.13 (3.14 not yet supported by langfuse)
+ARG PYTHON_VERSION=3.12
+
+# ==============================================================================
+# Stage 1: Builder
+# Uses standard Python image for building (has pip, gcc, etc.)
+# ==============================================================================
+FROM python:${PYTHON_VERSION}-slim AS builder
+
+# Install uv for fast dependency management
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Install build dependencies (needed for some Python packages)
+# git is required for mcp-refcache which is installed from GitHub
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy dependency files
+COPY pyproject.toml uv.lock ./
+
+# Create virtual environment and install dependencies
+# Uses BuildKit secret mount for GitHub token (never written to layer or logs)
+# --no-install-project: Don't install the project itself yet
+# --frozen: Use exact versions from lockfile
+# --no-dev: Skip dev dependencies for smaller image
+# UV_PROJECT_ENVIRONMENT: Tell uv to use /opt/venv instead of default .venv
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv
+
+RUN --mount=type=secret,id=github_token \
+    GITHUB_TOKEN=$(cat /run/secrets/github_token 2>/dev/null || echo "") && \
+    if [ -n "$GITHUB_TOKEN" ]; then \
+    git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"; \
+    fi && \
+    uv venv /opt/venv && \
+    uv sync --frozen --no-dev --no-install-project && \
+    git config --global --unset-all url.https://${GITHUB_TOKEN}@github.com/.insteadOf 2>/dev/null || true
+
+# ==============================================================================
+# Stage 2: Runtime (Python Slim - Minimal and Compatible)
+# ==============================================================================
+FROM python:${PYTHON_VERSION}-slim AS runtime
+
+# Re-declare ARG after FROM to use in this stage
+ARG PYTHON_VERSION=3.12
+
+# Create non-root user for security
+RUN useradd --create-home --uid 1000 appuser
+
+WORKDIR /app
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+
+# Set ownership
+RUN chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+
+# Set environment variables
+ENV PATH="/opt/venv/bin:$PATH"
+ENV PYTHONPATH="/app"
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Default port for HTTP transport
+EXPOSE 8000
+
+# Labels for container metadata
+LABEL org.opencontainers.image.source="https://github.com/l4b4r4b4b4/legal-mcp"
+LABEL org.opencontainers.image.description="A comprehensive legal research MCP server built with FastMCP and mcp-refcache, providing AI assistants with structured access to legal information across multiple jurisdictions."
+LABEL org.opencontainers.image.authors="Lucas Hänke de Cansino <lucas.cansino@mail.de>"
+LABEL org.opencontainers.image.licenses="MIT"
+LABEL org.opencontainers.image.base.name="python:${PYTHON_VERSION}-slim"
+
+# No CMD - this is a base image, child images set their own entrypoint

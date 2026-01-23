@@ -1,0 +1,377 @@
+# Release Pipeline for Legal-MCP
+#
+# Permissions Note:
+# workflow_run triggered workflows need explicit permissions for security-events
+# to upload SARIF files to GitHub's Security tab.
+#
+# Workflow Design:
+# - Triggers AFTER CI workflow passes on main branch
+# - Triggers on semantic version tags (v*.*.*)
+# - Builds and publishes Docker images to GHCR
+# - Runs security scans on built images
+#
+# Image Tagging Strategy:
+# - On merge to main: `latest`, `sha-abc1234`
+# - On version tag (v0.0.1): `latest`, `v0.0.1`, `0.0.1`, `0.0`
+#
+# Future (dev builds on PR):
+# - `dev-latest`, `dev-v0.0.1`, `dev-sha-abc1234`
+#
+# Runner Support:
+# - Uses GitHub-hosted runners by default
+# - Can use self-hosted runners via RUNNER_LABEL repository variable
+
+name: Release
+
+# Workflow-level permissions (required for workflow_run trigger)
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+
+on:
+  # Trigger after CI workflow completes on main
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+  # Trigger on semantic version tags
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*" # Pre-releases like v0.0.1-alpha
+
+  # Manual trigger for re-runs
+  workflow_dispatch:
+    inputs:
+      skip_security_scan:
+        description: "Skip security scan"
+        required: false
+        type: boolean
+        default: false
+
+# Cancel in-progress runs
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  BASE_IMAGE_NAME: l4b4r4b4b4/legal-mcp-base
+  APP_IMAGE_NAME: l4b4r4b4b4/legal-mcp
+
+jobs:
+  # Gate: Only proceed if CI passed (or tag push / manual trigger)
+  check-ci:
+    name: Verify CI Passed
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
+      github.event.workflow_run.conclusion == 'success'
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      should_build_base: ${{ steps.check.outputs.should_build_base }}
+      is_release: ${{ steps.check.outputs.is_release }}
+      version: ${{ steps.check.outputs.version }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check for base image changes
+        id: base-changes
+        run: |
+          # Check if base-image-relevant files changed
+          if git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -qE '^(docker/Dockerfile\.base|pyproject\.toml|uv\.lock)$'; then
+            echo "Base image files changed"
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "No base image changes"
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Verify CI passed for tag pushes
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="${{ github.ref_name }}"
+          echo "Tag push detected: $TAG_NAME"
+
+          # Skip CI check for initial v0.0.0 release (bootstrapping)
+          # This allows the cookiecutter template to trigger the first release
+          # immediately after project creation, before CI has a chance to run.
+          if [[ "$TAG_NAME" == "v0.0.0" ]]; then
+            echo "✅ Initial v0.0.0 release - skipping CI check (bootstrap mode)"
+            echo ""
+            echo "Note: Future releases (v0.0.1+) will require CI to pass first."
+            exit 0
+          fi
+
+          echo "Verifying CI passed for this commit..."
+
+          # Query GitHub API for CI workflow status on this commit
+          CI_STATUS=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
+            --jq '.check_runs[] | select(.name == "CI Success") | .conclusion' \
+            || echo "not_found")
+
+          if [[ "$CI_STATUS" == "success" ]]; then
+            echo "✅ CI passed for this commit"
+          else
+            echo "❌ ERROR: CI has not passed for this commit (status: $CI_STATUS)"
+            echo ""
+            echo "Please ensure CI passes before pushing version tags:"
+            echo "  1. Merge your PR to main"
+            echo "  2. Wait for CI to pass on main"
+            echo "  3. Then push the version tag"
+            echo ""
+            echo "Current commit: ${{ github.sha }}"
+            exit 1
+          fi
+
+      - name: Check CI status and extract version
+        id: check
+        run: |
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION="${{ github.ref_name }}"
+            echo "Tag push - version: $VERSION"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "is_release=true" >> $GITHUB_OUTPUT
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "Manual trigger - proceeding with build"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "is_release=false" >> $GITHUB_OUTPUT
+            echo "version=latest" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.event.workflow_run.conclusion }}" == "success" ]]; then
+            echo "CI passed - proceeding with build"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "is_release=false" >> $GITHUB_OUTPUT
+            echo "version=latest" >> $GITHUB_OUTPUT
+          else
+            echo "CI did not pass - skipping build"
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Determine if base image needs rebuilding
+          # Always rebuild base on: version tags, manual trigger, or relevant file changes
+          if [[ "${{ steps.base-changes.outputs.changed }}" == "true" ]] || \
+             [[ "${{ github.event_name }}" == "push" && "${{ github.ref_type }}" == "tag" ]] || \
+             [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "should_build_base=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_build_base=false" >> $GITHUB_OUTPUT
+          fi
+
+  build-base:
+    name: Build Base Image
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    needs: check-ci
+    if: needs.check-ci.outputs.should_build == 'true' && needs.check-ci.outputs.should_build_base == 'true'
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      base-digest: ${{ steps.build.outputs.digest }}
+      base-tags: ${{ steps.meta.outputs.tags }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for base image
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.BASE_IMAGE_NAME }}
+          tags: |
+            # Always include sha
+            type=sha,prefix=
+            # Latest on main branch
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || needs.check-ci.outputs.is_release == 'false' }}
+            # Semantic version tags (v0.0.1 -> v0.0.1, 0.0.1, 0.0)
+            type=semver,pattern=v{{version}},enable=${{ needs.check-ci.outputs.is_release == 'true' }}
+            type=semver,pattern={{version}},enable=${{ needs.check-ci.outputs.is_release == 'true' }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ needs.check-ci.outputs.is_release == 'true' }}
+
+      - name: Build and push base image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.base
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+          secrets: |
+            github_token=${{ secrets.GH_PAT }}
+
+  build-app:
+    name: Build App Image
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    needs: [check-ci, build-base]
+    if: |
+      always() &&
+      needs.check-ci.outputs.should_build == 'true' &&
+      (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      app-digest: ${{ steps.build.outputs.digest }}
+      app-tags: ${{ steps.meta.outputs.tags }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for app image
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.APP_IMAGE_NAME }}
+          tags: |
+            # Always include sha
+            type=sha,prefix=
+            # Latest on main branch
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || needs.check-ci.outputs.is_release == 'false' }}
+            # Semantic version tags (v0.0.1 -> v0.0.1, 0.0.1, 0.0)
+            type=semver,pattern=v{{version}},enable=${{ needs.check-ci.outputs.is_release == 'true' }}
+            type=semver,pattern={{version}},enable=${{ needs.check-ci.outputs.is_release == 'true' }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ needs.check-ci.outputs.is_release == 'true' }}
+
+      - name: Build and push app image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: production
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            BASE_IMAGE=${{ env.REGISTRY }}/${{ env.BASE_IMAGE_NAME }}:latest
+
+  security-scan:
+    name: Security Scan
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    needs: [check-ci, build-base, build-app]
+    if: |
+      always() &&
+      !inputs.skip_security_scan &&
+      needs.build-app.result == 'success'
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Trivy on base image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.BASE_IMAGE_NAME }}:latest
+          format: "sarif"
+          output: "trivy-base-results.sarif"
+          severity: "CRITICAL,HIGH"
+
+      - name: Run Trivy on app image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.APP_IMAGE_NAME }}:latest
+          format: "sarif"
+          output: "trivy-app-results.sarif"
+          severity: "CRITICAL,HIGH"
+
+      - name: Upload base image scan results
+        uses: github/codeql-action/upload-sarif@v4
+        continue-on-error: true # Don't fail if GitHub Advanced Security is not enabled
+        with:
+          sarif_file: "trivy-base-results.sarif"
+          category: "trivy-base"
+
+      - name: Upload app image scan results
+        uses: github/codeql-action/upload-sarif@v4
+        continue-on-error: true # Don't fail if GitHub Advanced Security is not enabled
+        with:
+          sarif_file: "trivy-app-results.sarif"
+          category: "trivy-app"
+
+  # Summary
+  release-complete:
+    name: Release Complete
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    needs: [check-ci, build-base, build-app, security-scan]
+    if: always() && needs.build-app.result == 'success'
+
+    steps:
+      - name: Summary
+        run: |
+          echo "## Release Pipeline Complete :rocket:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Release Info" >> $GITHUB_STEP_SUMMARY
+          echo "- Version: \`${{ needs.check-ci.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Is Semantic Release: \`${{ needs.check-ci.outputs.is_release }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Base Image Rebuilt: \`${{ needs.build-base.result }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Images Published" >> $GITHUB_STEP_SUMMARY
+          echo "- Base: \`${{ env.REGISTRY }}/${{ env.BASE_IMAGE_NAME }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- App: \`${{ env.REGISTRY }}/${{ env.APP_IMAGE_NAME }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Tags" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "${{ needs.build-app.outputs.app-tags }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Security Scan: ${{ needs.security-scan.result }}" >> $GITHUB_STEP_SUMMARY

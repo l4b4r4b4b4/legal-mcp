@@ -1,0 +1,70 @@
+{
+  "terminal": {
+    "env": {
+      "PYTHONPATH": "./src",
+    },
+  },
+  "lsp": {
+    "pyright": {
+      "settings": {
+        "python.pythonPath": ".venv/bin/python",
+        "python.analysis": {
+          "extraPaths": ["src"],
+          "diagnosticMode": "workspace",
+          "typeCheckingMode": "strict",
+        },
+      },
+    },
+  },
+  "languages": {
+    "Python": {
+      "format_on_save": "on",
+      "formatter": {
+        "external": {
+          "command": "ruff",
+          "arguments": ["format", "-"],
+        },
+      },
+      "language_servers": ["pyright"],
+    },
+  },
+  "context_servers": {
+    "nixos": {
+      "command": "uvx",
+      "args": ["mcp-nixos"],
+    },
+    "pypi": {
+      "command": "uvx",
+      "args": ["pypi-query-mcp-server"],
+    },
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp"],
+    },
+    "langfuse-docs": {
+      "command": "npx",
+      "args": ["mcp-remote", "https://langfuse.com/api/mcp"],
+    },
+    "legal-mcp-dev": {
+      "command": "uv",
+      "args": ["run", "legal-mcp", "stdio"],
+      "cwd": "{worktree_root}",
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+      },
+    },
+    "legal-mcp-server-local": {
+      "command": "npx",
+      "args": ["mcp-remote", "http://localhost:8000/mcp"],
+    },
+    "legal-mcp-lib": {
+      "command": "uvx",
+      "args": ["legal-mcp", "stdio"],
+      "env": {
+        "LANGFUSE_PUBLIC_KEY": "",
+        "LANGFUSE_SECRET_KEY": "",
+        "LANGFUSE_HOST": "https://cloud.langfuse.com",
+      },
+    },
+  },
+}

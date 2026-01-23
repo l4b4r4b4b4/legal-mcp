@@ -1,0 +1,183 @@
+# CD Pipeline for Legal-MCP
+#
+# Deployment workflow placeholder - customize for your infrastructure.
+#
+# This workflow:
+# - Triggers after Release workflow completes (images are built)
+# - Supports manual deployments to different environments
+# - Is designed to work with self-hosted runners
+#
+# Runner Configuration:
+# =====================
+# This workflow supports both GitHub-hosted and self-hosted runners.
+#
+# To use self-hosted runners:
+# 1. Set repository variable RUNNER_LABEL to match your runner labels
+#    Example: "self-hosted" or "threadripper" or "nixos"
+#
+# 2. Register a runner for this repo/org. Example NixOS config:
+#    ```nix
+#    services.github-runners."my-runner" = {
+#      enable = true;
+#      url = "https://github.com/OWNER/REPO";  # or org URL
+#      tokenFile = "/run/secrets/github_token";
+#      extraLabels = ["self-hosted" "nixos" "your-label"];
+#      extraPackages = with pkgs; [docker kubectl helm];
+#    };
+#    ```
+#
+# 3. Ensure runner has access to your deployment target (k8s, docker host, etc.)
+#
+# Deployment Targets:
+# ==================
+# Uncomment and customize the deployment job for your infrastructure:
+# - Kubernetes (kubectl/helm)
+# - Docker Compose on remote host
+# - Cloud Run / ECS / App Runner
+# - Fly.io / Railway / Render
+
+name: CD - Deploy
+
+on:
+  # Auto-deploy to staging after successful release
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+    branches: [main]
+
+  # Manual deployment trigger
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      image_tag:
+        description: "Image tag to deploy (default: latest)"
+        required: false
+        default: "latest"
+
+# Only one deployment at a time per environment
+concurrency:
+  group: deploy-${{ github.event.inputs.environment || 'staging' }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/legal-mcp
+
+jobs:
+  # Gate: Only proceed if Release workflow passed
+  check-release:
+    name: Verify Release
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    outputs:
+      should_deploy: ${{ steps.check.outputs.should_deploy }}
+      image_tag: ${{ steps.check.outputs.image_tag }}
+
+    steps:
+      - name: Check release status
+        id: check
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "Manual trigger - using tag: ${{ github.event.inputs.image_tag }}"
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
+            echo "image_tag=${{ github.event.inputs.image_tag }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.event.workflow_run.conclusion }}" == "success" ]]; then
+            echo "Release passed - deploying latest"
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
+            echo "image_tag=latest" >> $GITHUB_OUTPUT
+          else
+            echo "Release did not pass - skipping deployment"
+            echo "should_deploy=false" >> $GITHUB_OUTPUT
+          fi
+
+  # ==========================================================================
+  # DEPLOYMENT JOB - Customize for your infrastructure
+  # ==========================================================================
+  #
+  # Option 1: Docker Compose on remote host
+  # ---------------------------------------
+  # deploy:
+  #   name: Deploy via Docker Compose
+  #   runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+  #   needs: check-release
+  #   if: needs.check-release.outputs.should_deploy == 'true'
+  #   environment:
+  #     name: ${{ github.event.inputs.environment || 'staging' }}
+  #
+  #   steps:
+  #     - name: Deploy to remote host
+  #       uses: appleboy/ssh-action@v1.0.0
+  #       with:
+  #         host: ${{ secrets.DEPLOY_HOST }}
+  #         username: ${{ secrets.DEPLOY_USER }}
+  #         key: ${{ secrets.DEPLOY_SSH_KEY }}
+  #         script: |
+  #           cd /opt/legal-mcp
+  #           docker compose pull
+  #           docker compose up -d
+  #
+  # Option 2: Kubernetes with kubectl
+  # ---------------------------------
+  # deploy:
+  #   name: Deploy to Kubernetes
+  #   runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+  #   needs: check-release
+  #   if: needs.check-release.outputs.should_deploy == 'true'
+  #
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Set up kubectl
+  #       run: |
+  #         mkdir -p ~/.kube
+  #         echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
+  #     - name: Deploy
+  #       run: |
+  #         kubectl set image deployment/legal-mcp \
+  #           legal-mcp=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.check-release.outputs.image_tag }} \
+  #           -n legal-mcp
+  #         kubectl rollout status deployment/legal-mcp -n legal-mcp
+  #
+  # Option 3: Fly.io
+  # ----------------
+  # deploy:
+  #   name: Deploy to Fly.io
+  #   runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+  #   needs: check-release
+  #   if: needs.check-release.outputs.should_deploy == 'true'
+  #
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: superfly/flyctl-actions/setup-flyctl@master
+  #     - run: flyctl deploy --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.check-release.outputs.image_tag }}
+  #       env:
+  #         FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+  # Placeholder - remove when you add a real deployment
+  deploy-placeholder:
+    name: Deployment Placeholder
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    needs: check-release
+    if: needs.check-release.outputs.should_deploy == 'true'
+    environment:
+      name: ${{ github.event.inputs.environment || 'staging' }}
+
+    steps:
+      - name: Deployment info
+        run: |
+          echo "## Deployment Ready :rocket:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ github.event.inputs.environment || 'staging' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.check-release.outputs.image_tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Runner | \`${{ runner.name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> **Note:** This is a placeholder. Edit \`.github/workflows/cd.yml\` to add your deployment logic." >> $GITHUB_STEP_SUMMARY
