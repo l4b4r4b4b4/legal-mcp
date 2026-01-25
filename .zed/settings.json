@@ -37,34 +37,28 @@
       "command": "uvx",
       "args": ["pypi-query-mcp-server"],
     },
-    "context7": {
-      "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp"],
-    },
-    "langfuse-docs": {
-      "command": "npx",
-      "args": ["mcp-remote", "https://langfuse.com/api/mcp"],
-    },
     "legal-mcp-dev": {
       "command": "uv",
       "args": ["run", "legal-mcp", "stdio"],
       "cwd": "{worktree_root}",
       "env": {
         "PYTHONUNBUFFERED": "1",
+        "USE_TEI": "true",
+        "TEI_URL": "http://localhost:8011",
       },
     },
-    "legal-mcp-server-local": {
-      "command": "npx",
-      "args": ["mcp-remote", "http://localhost:8000/mcp"],
-    },
-    "legal-mcp-lib": {
-      "command": "uvx",
-      "args": ["legal-mcp", "stdio"],
-      "env": {
-        "LANGFUSE_PUBLIC_KEY": "",
-        "LANGFUSE_SECRET_KEY": "",
-        "LANGFUSE_HOST": "https://cloud.langfuse.com",
-      },
-    },
+    // "legal-mcp-server-local": {
+    //   "command": "npx",
+    //   "args": ["mcp-remote", "http://localhost:8000/mcp"],
+    // },
+    // "legal-mcp-lib": {
+    //   "command": "uvx",
+    //   "args": ["legal-mcp", "stdio"],
+    //   "env": {
+    //     "LANGFUSE_PUBLIC_KEY": "",
+    //     "LANGFUSE_SECRET_KEY": "",
+    //     "LANGFUSE_HOST": "https://cloud.langfuse.com",
+    //   },
+    // },
   },
 }
