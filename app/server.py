@@ -9,6 +9,7 @@ Features:
 - Pagination for accessing large datasets
 - Access control (user vs agent permissions)
 - Private computation (EXECUTE without READ)
+- Berlin portal (gesetze.berlin.de) local snapshot catalog (no network IO)
 
 
 Usage:
@@ -30,9 +31,19 @@ from mcp_refcache.fastmcp import cache_instructions, register_admin_tools
 
 from app.prompts import template_guide
 from app.tools import (
+    create_berlin_list_available_documents,
     create_compute_with_secret,
+    create_convert_files_to_markdown,
     create_get_cached_result,
+    create_get_law_by_id,
+    create_get_law_stats,
     create_health_check,
+    create_ingest_documents,
+    create_ingest_markdown_files,
+    create_ingest_pdf_files,
+    create_list_available_documents,
+    create_search_documents,
+    create_search_laws,
     create_store_secret,
 )
 
@@ -44,15 +55,31 @@ mcp = FastMCP(
     name="Legal-MCP",
     instructions=f"""A comprehensive legal research MCP server built with FastMCP and mcp-refcache, providing AI assistants with structured access to legal information across multiple jurisdictions.
 
+## German Law Tools
 
-Available tools:
+- search_laws: Semantic search across German federal laws (BGB, StGB, GG, etc.)
+- get_law_by_id: Lookup specific law sections by abbreviation and norm ID
+- get_law_stats: Get collection statistics and model status
 
+## Custom Document Tools
+
+These tools support ingesting and searching your own case files / documents.
+Isolation is enforced via `tenant_id` (required). Optionally scope further with `case_id`.
+
+- ingest_documents: Ingest custom plain-text documents
+- ingest_markdown_files: Ingest Markdown files from disk under an allowlisted root (set LEGAL_MCP_INGEST_ROOT)
+- convert_files_to_markdown: Convert allowlisted files (e.g., PDFs) on disk to Markdown/text
+- ingest_pdf_files: Ingest PDFs from disk under an allowlisted root (convert → ingest)
+- search_documents: Semantic search over ingested custom documents with filters (tenant_id required)
+
+## Cache Tools
+
+- get_cached_result: Retrieve or paginate through cached results (also for polling async jobs)
+
+## Secret Tools
 
 - store_secret: Store a secret value for private computation
 - compute_with_secret: Use a secret in computation without revealing it
-
-- get_cached_result: Retrieve or paginate through cached results
-
 
 {cache_instructions()}
 """,
@@ -86,6 +113,25 @@ compute_with_secret = create_compute_with_secret(cache)
 get_cached_result = create_get_cached_result(cache)
 health_check = create_health_check(_cache)
 
+# German law tools
+search_laws = create_search_laws(cache)
+get_law_by_id = create_get_law_by_id(cache)
+get_law_stats = create_get_law_stats(cache)
+
+# Catalog tools (offline; no network IO)
+list_available_documents = create_list_available_documents(cache)
+
+# Berlin tools (compatibility alias; delegates to generic catalog)
+berlin_list_available_documents = create_berlin_list_available_documents(cache)
+
+
+# Custom document tools
+ingest_documents = create_ingest_documents(cache)
+ingest_markdown_files = create_ingest_markdown_files(cache)
+convert_files_to_markdown = create_convert_files_to_markdown(cache)
+ingest_pdf_files = create_ingest_pdf_files(cache)
+search_documents = create_search_documents(cache)
+
 # =============================================================================
 # Register Tools
 # =============================================================================
@@ -95,6 +141,25 @@ mcp.tool(store_secret)
 mcp.tool(compute_with_secret)
 mcp.tool(get_cached_result)
 mcp.tool(health_check)
+
+# German law tools
+mcp.tool(search_laws)
+mcp.tool(get_law_by_id)
+mcp.tool(get_law_stats)
+
+# Catalog tools (offline; no network IO)
+mcp.tool(list_available_documents)
+
+# Berlin tools (compatibility alias; delegates to generic catalog)
+mcp.tool(berlin_list_available_documents)
+
+
+# Custom document tools
+mcp.tool(ingest_documents)
+mcp.tool(ingest_markdown_files)
+mcp.tool(convert_files_to_markdown)
+mcp.tool(ingest_pdf_files)
+mcp.tool(search_documents)
 
 # =============================================================================
 # Admin Tools (Permission-Gated)
