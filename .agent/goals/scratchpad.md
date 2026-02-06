@@ -12,7 +12,7 @@
 | 02 | Legal-MCP Knowledge Base | 🟡 In Progress | P1 (High) | 2026-01-24 |
 | 03 | Custom Document Ingestion and Semantic Search | 🟡 In Progress | P1 (High) | 2026-01-25 |
 | 04 | German State Law Sources & Indexing | ⚪ Not Started | P1 (High) | 2026-01-25 |
-| 05 | DevOps Tooling - Helm/K8s Environment | ⚪ Not Started | P1 (High) | 2026-02-07 |
+| 05 | DevOps Tooling - Helm/K8s Environment | 🔴 Blocked | P1 (High) | 2026-02-07 |
 | 06 | Multi-Jurisdiction Legal Framework | ⚪ Not Started | P1 (High) | 2026-02-07 |
 | 07 | International Construction Law Corpus | ⚪ Not Started | P1 (High) | 2026-02-07 |
 | 08 | Cross-Jurisdiction Comparison Tool | ⚪ Not Started | P2 (Medium) | 2026-02-07 |
@@ -72,6 +72,12 @@
 
 ## Recent Activity
 
+- **2026-02-07 01:00:** Goal 05 PR #1 blocked on test coverage
+  - All Helm/DevOps work complete (chart, CD pipeline, values files)
+  - CI: 169 tests pass, but coverage is 52.81% (required: 73%)
+  - PR: https://github.com/l4b4r4b4b4/legal-mcp/pull/1
+  - Branch: `feature/goal-05-helm-k8s-devops`
+  - Next: Add tests to reach 73% coverage, then merge and deploy to AKS
 - **2026-02-07:** Goals 05-08 created — Consulate Building Compliance Initiative
   - **Goal 05:** DevOps Helm/K8s Environment (~4-5h) — Add K8s tooling to flake.nix, create Helm chart
   - **Goal 06:** Multi-Jurisdiction Framework (~20h) — Abstract adapters, unified schema, EU proof-of-concept

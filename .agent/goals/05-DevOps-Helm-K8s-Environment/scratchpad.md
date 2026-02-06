@@ -1,9 +1,9 @@
 # Goal 05: DevOps Tooling - Helm/K8s Development Environment
 
-> **Status**: 🟡 In Progress
+> **Status**: 🔴 Blocked (on test coverage)
 > **Priority**: P1 (High) — Enables deployment work
 > **Created**: 2026-02-07
-> **Updated**: 2026-02-07 00:30
+> **Updated**: 2026-02-07 01:00
 
 ## Overview
 
@@ -21,8 +21,25 @@ Chart and values live in `.devops/helm/` — separated from application code.
 - [x] Dev shell prints quick reference for K8s commands
 - [x] Basic Helm chart structure created (`.devops/helm/legal-mcp/`)
 - [x] CD pipeline (`cd.yml`) wired to deploy Helm chart to AKS
-- [ ] Chart deployed to AKS testing cluster (needs Azure secrets configured)
+- [ ] Chart deployed to AKS testing cluster — **BLOCKED: CI fails on test coverage**
 - [x] Documentation for Azure AKS deployment workflow
+
+## Current Blocker: Test Coverage
+
+**CI Status:** 169 tests pass, but coverage is **52.81%** (required: **73%**)
+
+The PR includes all implemented features from Goals 02-04 which added significant new code without corresponding test coverage. The coverage gap by module:
+
+| Module | Coverage | Lines Missing |
+|--------|----------|---------------|
+| `app/ingestion/pipeline.py` | 0% | 186 lines |
+| `app/ingestion/tei_client.py` | 0% | 132 lines |
+| `app/ingestion/model_manager.py` | 0% | ~100 lines |
+| `app/tools/custom_documents.py` | 28% | 161 lines |
+| `app/tools/german_laws.py` | 39% | 37 lines |
+| `app/rag/reranker.py` | 63% | 28 lines |
+
+**To unblock:** Add tests to reach 73% coverage, OR temporarily lower threshold in `pyproject.toml` line 113.
 </newtml>
 
 <old_text line=62>
@@ -78,8 +95,9 @@ German consulates need to deploy legal-mcp in cloud environments (Azure) to prov
 | Task-02 | Create Helm chart skeleton | 🟢 | 1 hour | Task-01 |
 | Task-03 | Implement Deployment + Service + Ingress + HPA + PVC | 🟢 | 1 hour | Task-02 |
 | Task-04 | Create values files (default, example, aks-testing) | 🟢 | 30 min | Task-03 |
-| Task-05 | Wire CD pipeline + AKS deployment | 🟡 | 1 hour | Task-04 |
+| Task-05 | Wire CD pipeline + AKS deployment | 🟢 | 1 hour | Task-04 |
 | Task-06 | Document deployment workflow | 🟢 | 30 min | Task-04 |
+| Task-07 | Fix test coverage to unblock CI | 🔴 | 2-3 hours | Task-05 |
 
 **Total estimate:** ~4-5 hours
 
@@ -215,6 +233,25 @@ German consulates need to deploy legal-mcp in cloud environments (Azure) to prov
 - [ ] Azure Key Vault integration via CSI driver?
 - [x] ~~CI/CD pipeline for automated helm deploy on push?~~ — Done, `cd.yml` wired to Helm
 - [ ] Create production values file (`values/aks-production.yaml`)
+
+## PR Status
+
+**PR #1:** https://github.com/l4b4r4b4b4/legal-mcp/pull/1
+
+**Branch:** `feature/goal-05-helm-k8s-devops`
+
+**Commits:**
+1. `feat(devops): add Helm chart and K8s tooling for AKS deployment`
+2. `fix(lint): fix ruff errors in scripts and embeddings`
+3. `fix: add missing custom_documents tool and fix import sort`
+4. `feat: add complete legal-mcp implementation` (58K files, 761MB corpus)
+
+**CI Status:**
+- ✅ Lint & Format — passes
+- ✅ Security Scan — passes
+- ❌ Test (Python 3.12) — 169 tests pass, **coverage 52.81% < 73% required**
+
+**Next Action:** Add tests OR lower coverage threshold to merge and deploy.
 
 ## References
 
