@@ -1,0 +1,39 @@
+# Example values for legal-mcp Helm chart
+# This is a minimal configuration for quick deployment.
+#
+# Usage:
+#   helm install legal-mcp .devops/helm/legal-mcp -f .devops/helm/values/example.yaml
+#
+# For AKS testing, use: .devops/helm/values/aks-testing.yaml
+
+# Basic configuration
+replicaCount: 1
+
+image:
+  repository: ghcr.io/l4b4r4b4b4/legal-mcp
+  tag: "0.0.1"
+
+# Legal-MCP settings
+legalMcp:
+  transport: sse
+  port: 8000
+  logLevel: INFO
+  debug: false
+
+# Service exposure
+service:
+  type: ClusterIP
+  port: 8000
+
+# Resource limits
+resources:
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+  requests:
+    cpu: 250m
+    memory: 512Mi
+
+# Persistence (disabled by default for quick start)
+persistence:
+  enabled: false

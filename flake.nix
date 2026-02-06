@@ -30,7 +30,12 @@
               # System libraries (required for some dependencies)
               zlib
               stdenv.cc.cc.lib
-
+              # Kubernetes / Cloud tooling
+              azure-cli
+              kubectl
+              kubernetes-helm
+              k9s
+              netcat-openbsd
               # Playwright / Chromium runtime libraries
               # Needed for running the downloaded Playwright Chromium binaries inside the FHS env.
               expat
@@ -166,6 +171,18 @@
             echo ""
             echo "🔗 mcp-refcache dependency:"
             echo "  Installed from: git+https://github.com/l4b4r4b4b4/mcp-refcache"
+            echo ""
+            echo "☸️  Kubernetes / Helm:"
+            echo "  kubectl get pods                      - List pods"
+            echo "  kubectl logs <pod>                    - View pod logs"
+            echo "  helm install <name> .devops/helm/legal-mcp - Deploy chart"
+            echo "  helm upgrade <name> .devops/helm/legal-mcp - Upgrade deployment"
+            echo "  helm lint .devops/helm/legal-mcp      - Lint chart"
+            echo "  k9s                                   - Kubernetes TUI"
+            echo ""
+            echo "☁️  Azure:"
+            echo "  az login                              - Authenticate to Azure"
+            echo "  az aks get-credentials --resource-group <rg> --name <cluster>"
             echo ""
             echo "🚀 Ready to build!"
             echo ""

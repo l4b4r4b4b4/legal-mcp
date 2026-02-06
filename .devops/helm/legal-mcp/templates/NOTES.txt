@@ -1,0 +1,66 @@
+Thank you for installing {{ .Chart.Name }}!
+
+Chart Version: {{ .Chart.Version }}
+App Version:   {{ .Chart.AppVersion }}
+
+{{- if .Values.ingress.enabled }}
+🌐 Legal-MCP is accessible via Ingress:
+{{- range $host := .Values.ingress.hosts }}
+  {{- range .paths }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ $host.host }}{{ .path }}
+  {{- end }}
+{{- end }}
+{{- else if contains "NodePort" .Values.service.type }}
+🌐 Legal-MCP is accessible via NodePort:
+  export NODE_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "legal-mcp.fullname" . }})
+  export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo "http://$NODE_IP:$NODE_PORT"
+{{- else if contains "LoadBalancer" .Values.service.type }}
+🌐 Legal-MCP is accessible via LoadBalancer:
+  NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+  Watch status: kubectl get --namespace {{ .Release.Namespace }} svc -w {{ include "legal-mcp.fullname" . }}
+
+  export SERVICE_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ include "legal-mcp.fullname" . }} --template "{{"{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}"}}")
+  echo "http://$SERVICE_IP:{{ .Values.service.port }}"
+{{- else if contains "ClusterIP" .Values.service.type }}
+🌐 Legal-MCP is accessible via port-forward:
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "legal-mcp.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+
+  Then visit: http://localhost:{{ .Values.service.port }}
+{{- end }}
+
+📋 Useful commands:
+
+  # View logs
+  kubectl --namespace {{ .Release.Namespace }} logs -f deployment/{{ include "legal-mcp.fullname" . }}
+
+  # Check pod status
+  kubectl --namespace {{ .Release.Namespace }} get pods -l "app.kubernetes.io/name={{ include "legal-mcp.name" . }}"
+
+  # Describe deployment
+  kubectl --namespace {{ .Release.Namespace }} describe deployment {{ include "legal-mcp.fullname" . }}
+
+{{- if .Values.persistence.enabled }}
+
+💾 Persistence is ENABLED:
+  - PVC: {{ include "legal-mcp.fullname" . }}-data
+  - Size: {{ .Values.persistence.size }}
+{{- else }}
+
+⚠️  Persistence is DISABLED. Data will be lost on pod restart.
+    Enable with: --set persistence.enabled=true
+{{- end }}
+
+{{- if .Values.autoscaling.enabled }}
+
+📈 Autoscaling is ENABLED:
+  - Min replicas: {{ .Values.autoscaling.minReplicas }}
+  - Max replicas: {{ .Values.autoscaling.maxReplicas }}
+{{- end }}
+
+🔧 Configuration:
+  - Transport: {{ .Values.legalMcp.transport }}
+  - Port: {{ .Values.legalMcp.port }}
+  - Log level: {{ .Values.legalMcp.logLevel }}
+
+📚 Documentation: https://github.com/l4b4r4b4b4/mcp-refcache/tree/main/examples/legal-mcp

@@ -1,0 +1,19 @@
+apiVersion: v2
+name: legal-mcp
+description: A comprehensive legal research MCP server providing AI assistants with structured access to legal information across multiple jurisdictions.
+type: application
+version: 0.0.1
+appVersion: "0.0.1"
+keywords:
+  - mcp
+  - legal
+  - ai
+  - fastmcp
+  - legal-research
+  - multi-jurisdiction
+maintainers:
+  - name: l4b4r4b4b4
+home: https://github.com/l4b4r4b4b4/mcp-refcache
+sources:
+  - https://github.com/l4b4r4b4b4/mcp-refcache/tree/main/examples/legal-mcp
+dependencies: []

@@ -1,0 +1,167 @@
+# Default values for legal-mcp
+# This is a YAML-formatted file.
+
+# -- Number of replicas
+replicaCount: 1
+
+image:
+  # -- Container image repository
+  repository: ghcr.io/l4b4r4b4b4/legal-mcp
+  # -- Image pull policy
+  pullPolicy: IfNotPresent
+  # -- Overrides the image tag (default: chart appVersion)
+  tag: ""
+
+# -- Image pull secrets for private registries
+imagePullSecrets: []
+
+# -- Override the name of the chart
+nameOverride: ""
+
+# -- Override the full name of the chart
+fullnameOverride: ""
+
+serviceAccount:
+  # -- Specifies whether a service account should be created
+  create: true
+  # -- Annotations to add to the service account
+  annotations: {}
+  # -- The name of the service account to use
+  name: ""
+
+# -- Pod annotations
+podAnnotations: {}
+
+# -- Pod security context
+podSecurityContext:
+  fsGroup: 1000
+
+# -- Container security context
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  readOnlyRootFilesystem: false
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  # -- Service type
+  type: ClusterIP
+  # -- Service port
+  port: 8000
+  # -- Target port on the container
+  targetPort: 8000
+
+ingress:
+  # -- Enable ingress
+  enabled: false
+  # -- Ingress class name
+  className: ""
+  # -- Ingress annotations
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: legal-mcp.local
+      paths:
+        - path: /
+          pathType: Prefix
+  # -- TLS configuration
+  tls: []
+  #  - secretName: legal-mcp-tls
+  #    hosts:
+  #      - legal-mcp.local
+
+# -- Resource limits and requests
+resources:
+  limits:
+    cpu: 2000m
+    memory: 4Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+autoscaling:
+  # -- Enable horizontal pod autoscaling
+  enabled: false
+  # -- Minimum replicas
+  minReplicas: 1
+  # -- Maximum replicas
+  maxReplicas: 5
+  # -- Target CPU utilization percentage
+  targetCPUUtilizationPercentage: 80
+  # -- Target memory utilization percentage
+  targetMemoryUtilizationPercentage: 80
+
+# -- Node selector
+nodeSelector: {}
+
+# -- Tolerations
+tolerations: []
+
+# -- Affinity rules
+affinity: {}
+
+# Legal-MCP specific configuration
+legalMcp:
+  # -- Transport mode: stdio or sse
+  transport: sse
+  # -- Port for SSE transport (must match service.targetPort)
+  port: 8000
+  # -- Log level: DEBUG, INFO, WARNING, ERROR
+  logLevel: INFO
+  # -- Enable debug mode
+  debug: false
+
+# -- Environment variables (in addition to legalMcp config)
+env: []
+  # - name: EXAMPLE_VAR
+  #   value: "example-value"
+
+# -- Environment variables from secrets or configmaps
+envFrom: []
+  # - secretRef:
+  #     name: legal-mcp-secrets
+  # - configMapRef:
+  #     name: legal-mcp-config
+
+persistence:
+  # -- Enable persistent storage for data (embeddings, cache)
+  enabled: false
+  # -- Storage class name
+  storageClassName: ""
+  # -- Access modes
+  accessModes:
+    - ReadWriteOnce
+  # -- Storage size
+  size: 10Gi
+  # -- Annotations for PVC
+  annotations: {}
+
+# Probes configuration
+probes:
+  liveness:
+    # -- Enable liveness probe
+    enabled: true
+    # -- Initial delay seconds
+    initialDelaySeconds: 30
+    # -- Period seconds
+    periodSeconds: 10
+    # -- Timeout seconds
+    timeoutSeconds: 5
+    # -- Failure threshold
+    failureThreshold: 3
+  readiness:
+    # -- Enable readiness probe
+    enabled: true
+    # -- Initial delay seconds
+    initialDelaySeconds: 10
+    # -- Period seconds
+    periodSeconds: 5
+    # -- Timeout seconds
+    timeoutSeconds: 3
+    # -- Failure threshold
+    failureThreshold: 3

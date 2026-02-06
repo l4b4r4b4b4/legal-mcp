@@ -12,7 +12,10 @@
 | 02 | Legal-MCP Knowledge Base | 🟡 In Progress | P1 (High) | 2026-01-24 |
 | 03 | Custom Document Ingestion and Semantic Search | 🟡 In Progress | P1 (High) | 2026-01-25 |
 | 04 | German State Law Sources & Indexing | ⚪ Not Started | P1 (High) | 2026-01-25 |
-| 05 | (Reserved) | ⚪ Not Started | - | - |
+| 05 | DevOps Tooling - Helm/K8s Environment | ⚪ Not Started | P1 (High) | 2026-02-07 |
+| 06 | Multi-Jurisdiction Legal Framework | ⚪ Not Started | P1 (High) | 2026-02-07 |
+| 07 | International Construction Law Corpus | ⚪ Not Started | P1 (High) | 2026-02-07 |
+| 08 | Cross-Jurisdiction Comparison Tool | ⚪ Not Started | P2 (Medium) | 2026-02-07 |
 
 ---
 
@@ -42,6 +45,10 @@
 - [02-Legal-MCP](./02-Legal-MCP/scratchpad.md) — Legal knowledge base with hybrid retrieval (semantic + structured)
 - [03-Custom-Document-Ingestion-and-Semantic-Search](./03-Custom-Document-Ingestion-and-Semantic-Search/scratchpad.md) — Ingest custom documents (case files, briefs, contracts) and semantically search them with filters
 - [04-German-State-Law-Sources-And-Indexing](./04-German-State-Law-Sources-And-Indexing/scratchpad.md) — Add German state law (Landesrecht) sources, ingestion, normalization, and retrieval tools
+- [05-DevOps-Helm-K8s-Environment](./05-DevOps-Helm-K8s-Environment/scratchpad.md) — Add Azure CLI, Helm, kubectl to flake.nix for Kubernetes deployment
+- [06-Multi-Jurisdiction-Legal-Framework](./06-Multi-Jurisdiction-Legal-Framework/scratchpad.md) — Abstract jurisdiction adapters for international legal corpus
+- [07-International-Construction-Law-Corpus](./07-International-Construction-Law-Corpus/scratchpad.md) — Build preprocessed legal corpora (1 country per continent) for construction law
+- [08-Cross-Jurisdiction-Comparison-Tool](./08-Cross-Jurisdiction-Comparison-Tool/scratchpad.md) — Compare legislation across jurisdictions for compliance analysis
 
 ---
 
@@ -65,6 +72,13 @@
 
 ## Recent Activity
 
+- **2026-02-07:** Goals 05-08 created — Consulate Building Compliance Initiative
+  - **Goal 05:** DevOps Helm/K8s Environment (~4-5h) — Add K8s tooling to flake.nix, create Helm chart
+  - **Goal 06:** Multi-Jurisdiction Framework (~20h) — Abstract adapters, unified schema, EU proof-of-concept
+  - **Goal 07:** International Construction Law Corpus (~90-100h) — 1 country per continent (USA, Brazil, Japan, South Africa, Australia)
+  - **Goal 08:** Cross-Jurisdiction Comparison Tool (~50h) — Semantic similarity, gap analysis, compliance matrices
+  - Business context: German consulates need AI-assisted tooling to assess building compliance with German standards worldwide
+  - Dependency chain: Goal 05 (independent) → Goal 06 → Goal 07 → Goal 08
 - **2026-01-25:** Goal 04 created — German State Law Sources & Indexing
   - Goal: extend Legal-MCP beyond federal law by adding ingest + indexing + retrieval for German state law (Landesrecht) and related downloadable public sources (e.g., decisions), modeled after the existing federal pipeline.
   - Next: author `04-German-State-Law-Sources-And-Indexing/scratchpad.md` with research notes (source portals, formats, licensing), architecture decisions, task breakdown, and success criteria.
