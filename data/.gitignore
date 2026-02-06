@@ -1,0 +1,15 @@
+# Ignore raw XML corpus (too large for git, use Git LFS or separate repo)
+raw/
+
+# Ignore processed data (can be regenerated)
+processed/
+
+# Ignore embeddings (can be regenerated, very large)
+embeddings/
+
+# Keep directory structure
+!.gitkeep
+
+# Ignore any temporary files
+*.tmp
+*.bak
