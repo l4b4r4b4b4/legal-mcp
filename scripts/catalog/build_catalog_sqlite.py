@@ -59,7 +59,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 BERLIN_SOURCE = "de-state-berlin-bsbe"
 DEFAULT_DISCOVERY_DIRECTORY = Path("data/raw/de-state/berlin/discovery")
 DEFAULT_OUTPUT_PATH = Path("app/catalog_data/de_state_berlin_bsbe.sqlite")
