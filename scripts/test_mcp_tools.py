@@ -276,9 +276,9 @@ async def test_search_with_filters() -> bool:
     logger.info("Unwrapped result with filters: %s", result)
 
     assert isinstance(result, dict)
-    assert (
-        "filters" in result
-    ), f"Missing 'filters' key. Got keys: {list(result.keys())}"
+    assert "filters" in result, (
+        f"Missing 'filters' key. Got keys: {list(result.keys())}"
+    )
     assert result["filters"]["law_abbrev"] == "BGB"
     assert result["filters"]["level"] == "norm"
 
@@ -365,9 +365,9 @@ async def test_live_ingestion_and_search() -> bool:
         logger.error("❌ Ingestion failed: %s", result.get("message"))
         return False
 
-    assert (
-        result.get("status") == "complete"
-    ), f"Expected complete, got {result.get('status')}"
+    assert result.get("status") == "complete", (
+        f"Expected complete, got {result.get('status')}"
+    )
     assert result.get("documents_added", 0) > 0, "No documents were added"
     logger.info(
         "✅ Ingested %d documents from %d laws",
@@ -410,9 +410,9 @@ async def test_live_ingestion_and_search() -> bool:
         assert "content" in first_result, "Result missing content"
         assert "similarity" in first_result, "Result missing similarity"
         # Don't require high similarity - the test is about structure, not relevance
-        assert (
-            first_result["similarity"] > 0.0
-        ), f"Similarity should be positive: {first_result['similarity']}"
+        assert first_result["similarity"] > 0.0, (
+            f"Similarity should be positive: {first_result['similarity']}"
+        )
 
         logger.info(
             "✅ Search returned %d results, top similarity: %.3f",

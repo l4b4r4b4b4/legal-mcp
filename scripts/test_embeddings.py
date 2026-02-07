@@ -202,9 +202,9 @@ def test_semantic_search() -> bool:
             )
 
         assert len(results) > 0, "Expected search results"
-        assert (
-            results[0].metadata.get("law_abbrev") == "BGB"
-        ), "Expected BGB as top result"
+        assert results[0].metadata.get("law_abbrev") == "BGB", (
+            "Expected BGB as top result"
+        )
         print("✓ General search returns relevant results")
 
         # Test 2: Search with filter
@@ -215,9 +215,9 @@ def test_semantic_search() -> bool:
                 f"  - {r.metadata.get('law_abbrev')} {r.metadata.get('norm_id')}: {r.similarity:.3f}"
             )
 
-        assert all(
-            r.metadata.get("law_abbrev") == "GG" for r in results
-        ), "Filter not applied"
+        assert all(r.metadata.get("law_abbrev") == "GG" for r in results), (
+            "Filter not applied"
+        )
         print("✓ Filtered search respects metadata constraints")
 
         # Test 3: Get by ID
