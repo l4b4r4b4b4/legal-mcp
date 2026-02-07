@@ -1,0 +1,160 @@
+# AKS Production Environment Values for legal-mcp
+# Usage: helm install legal-mcp .devops/helm/legal-mcp -f .devops/helm/values/aks-production.yaml
+
+# HA: Multiple replicas for high availability
+replicaCount: 2
+
+image:
+  repository: ghcr.io/l4b4r4b4b4/legal-mcp
+  pullPolicy: IfNotPresent
+  # Pin specific tag for production stability
+  tag: "v0.1.0"
+
+# Azure Container Registry pull secret (configure if using ACR)
+# imagePullSecrets:
+#   - name: acr-pull-secret
+
+# Production resource limits (generous for legal document processing)
+resources:
+  limits:
+    cpu: 2000m
+    memory: 4Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 8000
+  targetPort: 8000
+
+# Ingress for production
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # SSE requires long timeouts for persistent connections
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+  hosts:
+    - host: legal-mcp.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: legal-mcp-tls
+      hosts:
+        - legal-mcp.example.com
+
+# Legal-MCP configuration for production
+legalMcp:
+  transport: sse
+  port: 8000
+  logLevel: INFO
+  debug: false
+
+# Environment variables
+env:
+  - name: ENVIRONMENT
+    value: "production"
+
+# Persistence for production - larger volume, retain data
+persistence:
+  enabled: true
+  storageClassName: "managed-csi-premium" # Azure premium SSD for production
+  accessModes:
+    - ReadWriteOnce
+  size: 50Gi
+
+# Enable autoscaling for production with MCP-appropriate settings
+autoscaling:
+  enabled: true
+  # Minimum 2 replicas for HA
+  minReplicas: 2
+  # Scale up to 10 replicas under load
+  maxReplicas: 10
+  # Scale at 70% CPU (lower threshold for MCP due to bursty requests)
+  targetCPUUtilizationPercentage: 70
+  # Scale at 80% memory
+  targetMemoryUtilizationPercentage: 80
+  # Scaling behavior optimized for MCP SSE connections
+  behavior:
+    scaleDown:
+      # Wait 5 minutes before scaling down to avoid disrupting active sessions
+      stabilizationWindowSeconds: 300
+      policies:
+        # Scale down slowly: 1 pod per minute max
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+      # Use least aggressive policy to protect active connections
+      selectPolicy: Min
+    scaleUp:
+      # Scale up immediately when needed
+      stabilizationWindowSeconds: 0
+      policies:
+        # Double capacity quickly
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        # Or add up to 4 pods
+        - type: Pods
+          value: 4
+          periodSeconds: 15
+      # Use most aggressive policy for fast response
+      selectPolicy: Max
+
+# Azure Workload Identity (configure with your client ID)
+serviceAccount:
+  create: true
+  annotations: {}
+    # azure.workload.identity/client-id: "<your-client-id>"
+
+# Pod annotations for monitoring
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8000"
+
+# Production probes - tighter tolerances
+probes:
+  liveness:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    enabled: true
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+# Pod Disruption Budget via node selector/affinity
+# Spread pods across availability zones
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: legal-mcp
+          topologyKey: topology.kubernetes.io/zone
+
+# Target user node pool (not system)
+nodeSelector:
+  agentpool: "userpool"
+
+# Tolerations for dedicated node pools
+tolerations: []
+
+# Pod Disruption Budget for production HA
+podDisruptionBudget:
+  enabled: true
+  # Ensure at least 1 pod is always available during maintenance
+  minAvailable: 1

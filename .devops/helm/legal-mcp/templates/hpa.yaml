@@ -29,4 +29,33 @@ spec:
           type: Utilization
           averageUtilization: {{ .Values.autoscaling.targetMemoryUtilizationPercentage }}
     {{- end }}
+  {{- if .Values.autoscaling.behavior }}
+  behavior:
+    {{- if .Values.autoscaling.behavior.scaleDown }}
+    scaleDown:
+      {{- if .Values.autoscaling.behavior.scaleDown.stabilizationWindowSeconds }}
+      stabilizationWindowSeconds: {{ .Values.autoscaling.behavior.scaleDown.stabilizationWindowSeconds }}
+      {{- end }}
+      {{- if .Values.autoscaling.behavior.scaleDown.policies }}
+      policies:
+        {{- toYaml .Values.autoscaling.behavior.scaleDown.policies | nindent 8 }}
+      {{- end }}
+      {{- if .Values.autoscaling.behavior.scaleDown.selectPolicy }}
+      selectPolicy: {{ .Values.autoscaling.behavior.scaleDown.selectPolicy }}
+      {{- end }}
+    {{- end }}
+    {{- if .Values.autoscaling.behavior.scaleUp }}
+    scaleUp:
+      {{- if .Values.autoscaling.behavior.scaleUp.stabilizationWindowSeconds }}
+      stabilizationWindowSeconds: {{ .Values.autoscaling.behavior.scaleUp.stabilizationWindowSeconds }}
+      {{- end }}
+      {{- if .Values.autoscaling.behavior.scaleUp.policies }}
+      policies:
+        {{- toYaml .Values.autoscaling.behavior.scaleUp.policies | nindent 8 }}
+      {{- end }}
+      {{- if .Values.autoscaling.behavior.scaleUp.selectPolicy }}
+      selectPolicy: {{ .Values.autoscaling.behavior.scaleUp.selectPolicy }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
 {{- end }}
