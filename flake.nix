@@ -30,6 +30,42 @@
               # System libraries (required for some dependencies)
               zlib
               stdenv.cc.cc.lib
+              # Kubernetes / Cloud tooling
+              azure-cli
+              kubectl
+              kubernetes-helm
+              k9s
+              netcat-openbsd
+              # Playwright / Chromium runtime libraries
+              # Needed for running the downloaded Playwright Chromium binaries inside the FHS env.
+              expat
+              glib
+              mesa
+              libdrm
+              libglvnd
+              systemd
+              nss
+              nspr
+              atk
+              at-spi2-atk
+              cups
+              libdrm
+              libxkbcommon
+              mesa
+              pango
+              cairo
+              alsa-lib
+              dbus
+              xorg.libX11
+              xorg.libXcomposite
+              xorg.libXdamage
+              xorg.libXext
+              xorg.libXfixes
+              xorg.libXrandr
+              xorg.libxcb
+              xorg.libxshmfence
+              xorg.libXi
+              xorg.libXtst
 
               # Shells
               zsh
@@ -88,6 +124,32 @@
             export PYTHONPATH="$PWD/src:$PWD"
             export SSL_CERT_FILE="/etc/ssl/certs/ca-bundle.crt"
 
+            # Playwright Chromium (downloaded binary) can fail to start if it picks up a
+            # 32-bit libgbm (ELFCLASS32) or can't resolve libgbm.so.1. In this FHS env,
+            # the robust fix is to ensure the FHS rootfs /usr/lib64 is *ahead* of other
+            # library search paths.
+            #
+            # This finds the rootfs for this FHS env at runtime and prepends its usr/lib64.
+            fhs_usr_lib64="$(ls -d /nix/store/*-legal-mcp-dev-env-fhsenv-rootfs/usr/lib64 2>/dev/null | head -n 1)"
+
+            # Playwright Chromium needs libgbm.so.1. Depending on the pinned nixpkgs,
+            # the providing attribute name can vary, but the store path typically
+            # contains a '*-mesa-libgbm-*' derivation. We locate it at runtime and
+            # prepend its /lib directory if present.
+            mesa_libgbm_lib="$(ls -d /nix/store/*-mesa-libgbm-*/lib 2>/dev/null | head -n 1)"
+
+            if [ -z "$mesa_libgbm_lib" ]; then
+              echo "⚠️  Playwright/Chromium: could not locate a '*-mesa-libgbm-*' store path."
+              echo "    Chromium may fail with: libgbm.so.1: cannot open shared object file"
+              echo "    Workaround: set LD_LIBRARY_PATH to include the correct mesa-libgbm /lib path."
+            fi
+
+            if [ -n "$fhs_usr_lib64" ]; then
+              export LD_LIBRARY_PATH="$fhs_usr_lib64:''${mesa_libgbm_lib:+$mesa_libgbm_lib:}${pkgs.mesa}/lib:${pkgs.libdrm}/lib:${pkgs.systemd}/lib:${pkgs.libglvnd}/lib:${pkgs.glib}/lib:${pkgs.expat}/lib:''${LD_LIBRARY_PATH:-}"
+            else
+              export LD_LIBRARY_PATH="''${mesa_libgbm_lib:+$mesa_libgbm_lib:}${pkgs.mesa}/lib:${pkgs.libdrm}/lib:${pkgs.systemd}/lib:${pkgs.libglvnd}/lib:${pkgs.glib}/lib:${pkgs.expat}/lib:''${LD_LIBRARY_PATH:-}"
+            fi
+
             echo ""
             echo "🚀 Legal-MCP Quick Reference:"
             echo ""
@@ -109,6 +171,18 @@
             echo ""
             echo "🔗 mcp-refcache dependency:"
             echo "  Installed from: git+https://github.com/l4b4r4b4b4/mcp-refcache"
+            echo ""
+            echo "☸️  Kubernetes / Helm:"
+            echo "  kubectl get pods                      - List pods"
+            echo "  kubectl logs <pod>                    - View pod logs"
+            echo "  helm install <name> .devops/helm/legal-mcp - Deploy chart"
+            echo "  helm upgrade <name> .devops/helm/legal-mcp - Upgrade deployment"
+            echo "  helm lint .devops/helm/legal-mcp      - Lint chart"
+            echo "  k9s                                   - Kubernetes TUI"
+            echo ""
+            echo "☁️  Azure:"
+            echo "  az login                              - Authenticate to Azure"
+            echo "  az aks get-credentials --resource-group <rg> --name <cluster>"
             echo ""
             echo "🚀 Ready to build!"
             echo ""

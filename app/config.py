@@ -11,6 +11,17 @@ Environment Variables:
     LANGFUSE_PUBLIC_KEY: Langfuse public key (optional)
     LANGFUSE_SECRET_KEY: Langfuse secret key (optional)
     LANGFUSE_HOST: Langfuse host URL (default: https://cloud.langfuse.com)
+    CHROMA_PERSIST_PATH: ChromaDB persistence directory (default: XDG data dir)
+    EMBEDDING_MODEL: Sentence-transformers model name (default: jina-embeddings-v2-base-de)
+    USE_TEI: Use TEI server for embeddings instead of local model (default: false)
+    TEI_URL: TEI server URL (default: http://localhost:8011)
+    RERANKER_URL: TEI reranker server URL (default: http://localhost:8020)
+    LLM_PROVIDER: LLM provider - ollama, vllm, openai (default: ollama)
+    LLM_MODEL: Model name for the provider (default: llama3.2)
+    LLM_API_BASE: Override API base URL (optional)
+    LLM_TEMPERATURE: Sampling temperature 0-2 (default: 0.1)
+    LLM_MAX_TOKENS: Maximum tokens to generate (default: 1024)
+    LEGAL_MCP_INGEST_ROOT: Allowlisted root directory for file-based ingestion tools (required for ingest_markdown_files)
 """
 
 from __future__ import annotations
@@ -24,15 +35,22 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-def _get_default_sqlite_path() -> str:
-    """Get XDG-compliant default SQLite path."""
+def _get_xdg_data_home() -> Path:
+    """Get XDG-compliant data home directory."""
     xdg_data_home = os.environ.get("XDG_DATA_HOME")
     if xdg_data_home:
-        base_dir = Path(xdg_data_home)
-    else:
-        base_dir = Path.home() / ".local" / "share"
+        return Path(xdg_data_home)
+    return Path.home() / ".local" / "share"
 
-    return str(base_dir / "legal-mcp" / "cache.db")
+
+def _get_default_sqlite_path() -> str:
+    """Get XDG-compliant default SQLite path."""
+    return str(_get_xdg_data_home() / "legal-mcp" / "cache.db")
+
+
+def _get_default_chroma_path() -> str:
+    """Get XDG-compliant default ChromaDB path."""
+    return str(_get_xdg_data_home() / "legal-mcp" / "chroma")
 
 
 class Settings(BaseSettings):
@@ -58,6 +76,66 @@ class Settings(BaseSettings):
     sqlite_path: str = Field(
         default_factory=_get_default_sqlite_path,
         description="SQLite database path for local persistence.",
+    )
+
+    # ChromaDB and embedding configuration
+    chroma_persist_path: str = Field(
+        default_factory=_get_default_chroma_path,
+        description="ChromaDB persistence directory for vector storage.",
+    )
+    embedding_model: str = Field(
+        default="jinaai/jina-embeddings-v2-base-de",
+        description="Sentence-transformers model name for embeddings. Default is Jina's German-English bilingual model with 8192 token context.",
+    )
+
+    # TEI (Text Embeddings Inference) configuration
+    use_tei: bool = Field(
+        default=False,
+        description="Use TEI server for embeddings instead of local model. Much better GPU memory management.",
+    )
+    tei_url: str = Field(
+        default="http://localhost:8011",
+        description="TEI server URL for HTTP-based embeddings.",
+    )
+    reranker_url: str = Field(
+        default="http://localhost:8020",
+        description="TEI reranker server URL for two-stage retrieval.",
+    )
+
+    # LLM configuration for RAG
+    llm_provider: Literal["ollama", "vllm", "openai"] = Field(
+        default="vllm",
+        description="LLM provider for RAG generation. 'ollama' for local, 'vllm' for GPU server, 'openai' for API.",
+    )
+    llm_model: str = Field(
+        default="uai/lm-small",
+        description="Model name for the LLM provider. Default matches docker-compose.gpu.yml vLLM served-model-name.",
+    )
+    llm_api_base: str | None = Field(
+        default="http://localhost:7373/v1",
+        description="Override API base URL for LLM provider. Default matches docker-compose.gpu.yml vLLM port.",
+    )
+    llm_temperature: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=2.0,
+        description="Sampling temperature (0-2). Lower values are more deterministic.",
+    )
+    llm_max_tokens: int = Field(
+        default=1024,
+        ge=1,
+        le=8192,
+        description="Maximum tokens to generate in response.",
+    )
+
+    # Allowlisted ingest root for file-based ingestion tools
+    ingest_root_path: str | None = Field(
+        default=None,
+        description=(
+            "Allowlisted root directory for file-based ingestion tools. "
+            "When set, tools like ingest_markdown_files may only read files under this directory. "
+            "If unset, file-based ingestion tools should fail fast."
+        ),
     )
 
     # Server configuration (for HTTP modes)
@@ -86,10 +164,12 @@ class Settings(BaseSettings):
         description="Langfuse host URL.",
     )
 
-    @field_validator("sqlite_path")
+    @field_validator("sqlite_path", "chroma_persist_path", "ingest_root_path")
     @classmethod
-    def expand_sqlite_path(cls, value: str) -> str:
-        """Expand ~ in SQLite path."""
+    def expand_path(cls, value: str | None) -> str | None:
+        """Expand ~ in file paths."""
+        if value is None:
+            return None
         return str(Path(value).expanduser())
 
     @property

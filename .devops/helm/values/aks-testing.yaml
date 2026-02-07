@@ -1,0 +1,110 @@
+# AKS Testing Environment Values for legal-mcp
+# Usage: helm install legal-mcp .devops/helm/legal-mcp -f .devops/helm/values/aks-testing.yaml
+
+# Replicas for testing
+replicaCount: 1
+
+image:
+  repository: ghcr.io/l4b4r4b4b4/legal-mcp
+  pullPolicy: Always
+  # Use latest for testing, pin specific tag for prod
+  tag: "latest"
+
+# Azure Container Registry pull secret (if using ACR)
+# imagePullSecrets:
+#   - name: acr-pull-secret
+
+# Resource limits for testing (smaller than prod)
+resources:
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+  requests:
+    cpu: 250m
+    memory: 512Mi
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 8000
+  targetPort: 8000
+
+# Ingress for testing - enable and configure for your domain
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    # cert-manager.io/cluster-issuer: letsencrypt-staging
+  hosts:
+    - host: legal-mcp-test.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  # Uncomment for TLS
+  #   - secretName: legal-mcp-test-tls
+  #     hosts:
+  #       - legal-mcp-test.example.com
+
+# Legal-MCP configuration for testing
+legalMcp:
+  transport: sse
+  port: 8000
+  logLevel: DEBUG
+  debug: true
+
+# Environment variables
+env:
+  - name: ENVIRONMENT
+    value: "testing"
+
+# Persistence for testing - enabled to retain data between deploys
+persistence:
+  enabled: true
+  storageClassName: "managed-csi"  # Azure managed disk CSI driver
+  accessModes:
+    - ReadWriteOnce
+  size: 5Gi
+
+# Disable autoscaling for testing
+autoscaling:
+  enabled: false
+
+# Azure-specific: Use workload identity annotation (if configured)
+serviceAccount:
+  create: true
+  annotations: {}
+  # Uncomment for Azure Workload Identity
+  #   azure.workload.identity/client-id: "<your-client-id>"
+
+# Pod annotations for testing
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8000"
+
+# Probes - more lenient for testing/debugging
+probes:
+  liveness:
+    enabled: true
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 5
+  readiness:
+    enabled: true
+    initialDelaySeconds: 20
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+# Node selector - use standard nodes for testing
+nodeSelector: {}
+# Uncomment to target specific node pool
+#   agentpool: "userpool"
+
+# Tolerations for testing
+tolerations: []
+
+# Affinity rules
+affinity: {}

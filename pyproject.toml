@@ -13,11 +13,24 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "aiofiles>=25.1.0",
+    "aiohttp>=3.13.3",
+    "chromadb>=1.4.1",
     "fastmcp>=2.14.0",
-
+    "h2>=4.3.0",
+    "langchain>=1.2.7",
+    "langchain-core>=1.2.7",
+    "langchain-text-splitters>=1.1.0",
+    "langgraph>=1.0.7",
+    "litellm>=1.81.1",
+    "lxml>=6.0.2",
+    "markitdown[all]>=0.1.4",
     "mcp-refcache>=0.1.0",
     "pydantic>=2.10.0",
     "pydantic-settings>=2.10.0",
+    "pysocks>=1.7.1",
+    "selectolax>=0.4.6",
+    "sentence-transformers>=5.2.0",
     "typer>=0.15.0",
 ]
 
@@ -29,7 +42,7 @@ requires = ["hatchling>=1.0.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["app"]
+packages = ["app", "src/legal_mcp"]
 
 [tool.hatch.build]
 exclude = [
@@ -50,6 +63,7 @@ compile-bytecode = false
 [dependency-groups]
 dev = [
     "mypy>=1.19.0",
+    "playwright>=1.57.0",
     "pre-commit>=4.5.0",
     "pytest>=9.0.1",
     "pytest-asyncio>=1.3.0",
