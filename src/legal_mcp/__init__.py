@@ -1,3 +1,3 @@
 """Legal-MCP loaders and utilities package."""
 
-__all__ = ["loaders"]
+__all__ = ["loaders", "net"]
