@@ -87,14 +87,42 @@ resources:
 autoscaling:
   # -- Enable horizontal pod autoscaling
   enabled: false
-  # -- Minimum replicas
+  # -- Minimum replicas (2 recommended for production HA)
   minReplicas: 1
   # -- Maximum replicas
   maxReplicas: 5
-  # -- Target CPU utilization percentage
-  targetCPUUtilizationPercentage: 80
+  # -- Target CPU utilization percentage (lower for MCP due to bursty requests)
+  targetCPUUtilizationPercentage: 70
   # -- Target memory utilization percentage
   targetMemoryUtilizationPercentage: 80
+  # -- Scaling behavior configuration for MCP server stability
+  # MCP servers use SSE (long-lived connections), so we need conservative scale-down
+  # to avoid disrupting active client sessions
+  behavior:
+    scaleDown:
+      # -- Wait 5 minutes before scaling down to avoid thrashing
+      stabilizationWindowSeconds: 300
+      policies:
+        # -- Scale down at most 1 pod per minute
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+      # -- Use the policy that results in the least change
+      selectPolicy: Min
+    scaleUp:
+      # -- Scale up quickly to handle demand (0 = immediate)
+      stabilizationWindowSeconds: 0
+      policies:
+        # -- Scale up by 100% of current pods per 15 seconds
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        # -- Or add up to 4 pods per 15 seconds
+        - type: Pods
+          value: 4
+          periodSeconds: 15
+      # -- Use the policy that results in the most pods (faster scale-up)
+      selectPolicy: Max
 
 # -- Node selector
 nodeSelector: {}
@@ -107,14 +135,24 @@ affinity: {}
 
 # Legal-MCP specific configuration
 legalMcp:
-  # -- Transport mode: stdio or sse
-  transport: sse
-  # -- Port for SSE transport (must match service.targetPort)
+  # -- Transport mode: stdio, sse (deprecated), or streamable-http (recommended)
+  # The CLI uses subcommands, not --transport flag:
+  #   python -m app stdio           # Local CLI mode
+  #   python -m app sse             # SSE server (deprecated)
+  #   python -m app streamable-http # Streamable HTTP (recommended)
+  transport: streamable-http
+  # -- Server host (used for sse and streamable-http transports)
+  host: "0.0.0.0"
+  # -- Server port (must match service.targetPort, not used for stdio)
   port: 8000
   # -- Log level: DEBUG, INFO, WARNING, ERROR
   logLevel: INFO
   # -- Enable debug mode
   debug: false
+  # -- Custom command override (optional, for advanced use)
+  # command: ["python", "-m", "app"]
+  # -- Custom args override (optional, overrides transport/port)
+  # args: ["streamable-http", "--port", "8000"]
 
 # -- Environment variables (in addition to legalMcp config)
 env: []
@@ -142,6 +180,8 @@ persistence:
   annotations: {}
 
 # Probes configuration
+# By default, probes use TCP socket checks since FastMCP doesn't have a /health endpoint.
+# To use HTTP probes, set httpGet.path and httpGet.port under each probe.
 probes:
   liveness:
     # -- Enable liveness probe
@@ -154,6 +194,10 @@ probes:
     timeoutSeconds: 5
     # -- Failure threshold
     failureThreshold: 3
+    # -- HTTP GET probe (optional, defaults to TCP socket if not set)
+    # httpGet:
+    #   path: /health
+    #   port: http
   readiness:
     # -- Enable readiness probe
     enabled: true
@@ -165,3 +209,18 @@ probes:
     timeoutSeconds: 3
     # -- Failure threshold
     failureThreshold: 3
+    # -- HTTP GET probe (optional, defaults to TCP socket if not set)
+    # httpGet:
+    #   path: /health
+    #   port: http
+
+# Pod Disruption Budget configuration
+podDisruptionBudget:
+  # -- Enable PDB for production HA
+  enabled: false
+  # -- Minimum available pods (use for HA, mutually exclusive with maxUnavailable)
+  minAvailable: 1
+  # -- Maximum unavailable pods (alternative to minAvailable)
+  # maxUnavailable: 1
+  # -- Unhealthy pod eviction policy (IfHealthyBudget or AlwaysAllow)
+  # unhealthyPodEvictionPolicy: IfHealthyBudget

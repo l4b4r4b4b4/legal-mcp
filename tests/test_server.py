@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
+
+if TYPE_CHECKING:
+    from typing import Any
 
 import pytest
 
@@ -55,6 +59,48 @@ class TestHealthCheck:
 
         assert "cache" in result
         assert result["cache"] == "legal-mcp"
+
+
+class TestHTTPHealthEndpoint:
+    """Tests for the HTTP /health endpoint for Kubernetes probes."""
+
+    @pytest.fixture
+    def test_client(self) -> Any:
+        """Create a test client for the FastMCP server."""
+        from starlette.testclient import TestClient
+
+        # FastMCP exposes an ASGI app via http_app property
+        return TestClient(mcp.http_app())
+
+    def test_health_endpoint_returns_200(self, test_client: Any) -> None:
+        """Test that /health endpoint returns 200 OK."""
+        response = test_client.get("/health")
+        assert response.status_code == 200
+
+    def test_health_endpoint_returns_json(self, test_client: Any) -> None:
+        """Test that /health endpoint returns valid JSON."""
+        response = test_client.get("/health")
+        data = response.json()
+        assert isinstance(data, dict)
+
+    def test_health_endpoint_returns_status(self, test_client: Any) -> None:
+        """Test that /health endpoint returns healthy status."""
+        response = test_client.get("/health")
+        data = response.json()
+        assert data["status"] == "healthy"
+
+    def test_health_endpoint_returns_server_name(self, test_client: Any) -> None:
+        """Test that /health endpoint returns server name."""
+        response = test_client.get("/health")
+        data = response.json()
+        assert data["server"] == "Legal-MCP"
+
+    def test_health_endpoint_returns_cache_info(self, test_client: Any) -> None:
+        """Test that /health endpoint returns cache information."""
+        response = test_client.get("/health")
+        data = response.json()
+        assert "cache" in data
+        assert data["cache"]["name"] == "legal-mcp"
 
 
 class TestMCPConfiguration:

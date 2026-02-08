@@ -3,6 +3,8 @@
 This module creates and configures the FastMCP server, wiring together
 tools from the modular tools package.
 
+Includes a /health HTTP endpoint for Kubernetes liveness/readiness probes.
+
 Features:
 - Reference-based caching for large results
 - Preview generation (sample, truncate, paginate strategies)
@@ -23,11 +25,12 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastmcp import FastMCP
 from mcp_refcache import PreviewConfig, PreviewStrategy, RefCache
 from mcp_refcache.fastmcp import cache_instructions, register_admin_tools
+from starlette.responses import JSONResponse, Response
 
 from app.prompts import template_guide
 from app.tools import (
@@ -46,6 +49,9 @@ from app.tools import (
     create_search_laws,
     create_store_secret,
 )
+
+if TYPE_CHECKING:
+    from starlette.requests import Request
 
 # =============================================================================
 # Initialize FastMCP Server
@@ -193,3 +199,27 @@ _admin_tools = register_admin_tools(
 def _template_guide() -> str:
     """Guide for using this MCP server template."""
     return template_guide()
+
+
+# =============================================================================
+# Health Check HTTP Endpoint (for Kubernetes probes)
+# =============================================================================
+
+
+@mcp.custom_route("/health", methods=["GET"])
+async def http_health_check(request: Request) -> Response:
+    """HTTP health check endpoint for Kubernetes liveness/readiness probes.
+
+    Returns:
+        JSON response with health status and basic server info.
+    """
+    return JSONResponse(
+        {
+            "status": "healthy",
+            "server": "Legal-MCP",
+            "cache": {
+                "name": _cache.name,
+            },
+        },
+        status_code=200,
+    )
