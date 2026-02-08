@@ -33,11 +33,28 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: {{ include "legal-mcp.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          args:
-            - "--transport"
+          {{- if .Values.legalMcp.command }}
+          command:
+            {{- toYaml .Values.legalMcp.command | nindent 12 }}
+          {{- else }}
+          command:
+            - "python"
+            - "-m"
+            - "app"
             - "{{ .Values.legalMcp.transport }}"
+            {{- if and .Values.legalMcp.host (ne .Values.legalMcp.transport "stdio") }}
+            - "--host"
+            - "{{ .Values.legalMcp.host }}"
+            {{- end }}
+            {{- if ne .Values.legalMcp.transport "stdio" }}
             - "--port"
-            - "{{ .Values.legalMcp.port }}"
+            - "{{ .Values.legalMcp.port | toString }}"
+            {{- end }}
+          {{- end }}
+          {{- if .Values.legalMcp.args }}
+          args:
+            {{- toYaml .Values.legalMcp.args | nindent 12 }}
+          {{- end }}
           env:
             - name: LOG_LEVEL
               value: {{ .Values.legalMcp.logLevel | quote }}
@@ -56,9 +73,14 @@ spec:
               protocol: TCP
           {{- if .Values.probes.liveness.enabled }}
           livenessProbe:
+            {{- if .Values.probes.liveness.httpGet }}
             httpGet:
-              path: /health
+              path: {{ .Values.probes.liveness.httpGet.path | default "/health" }}
+              port: {{ .Values.probes.liveness.httpGet.port | default "http" }}
+            {{- else }}
+            tcpSocket:
               port: http
+            {{- end }}
             initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
@@ -66,9 +88,14 @@ spec:
           {{- end }}
           {{- if .Values.probes.readiness.enabled }}
           readinessProbe:
+            {{- if .Values.probes.readiness.httpGet }}
             httpGet:
-              path: /health
+              path: {{ .Values.probes.readiness.httpGet.path | default "/health" }}
+              port: {{ .Values.probes.readiness.httpGet.port | default "http" }}
+            {{- else }}
+            tcpSocket:
               port: http
+            {{- end }}
             initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}

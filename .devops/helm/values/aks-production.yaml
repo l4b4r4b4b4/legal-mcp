@@ -52,7 +52,9 @@ ingress:
 
 # Legal-MCP configuration for production
 legalMcp:
-  transport: sse
+  # Use streamable-http (recommended) instead of deprecated sse
+  transport: streamable-http
+  host: "0.0.0.0"
   port: 8000
   logLevel: INFO
   debug: false

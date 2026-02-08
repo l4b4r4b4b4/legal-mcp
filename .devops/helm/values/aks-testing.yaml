@@ -49,7 +49,9 @@ ingress:
 
 # Legal-MCP configuration for testing
 legalMcp:
-  transport: sse
+  # Use streamable-http (recommended) instead of deprecated sse
+  transport: streamable-http
+  host: "0.0.0.0"
   port: 8000
   logLevel: DEBUG
   debug: true
@@ -62,7 +64,7 @@ env:
 # Persistence for testing - enabled to retain data between deploys
 persistence:
   enabled: true
-  storageClassName: "managed-csi"  # Azure managed disk CSI driver
+  storageClassName: "managed-csi" # Azure managed disk CSI driver
   accessModes:
     - ReadWriteOnce
   size: 5Gi

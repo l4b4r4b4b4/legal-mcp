@@ -135,14 +135,24 @@ affinity: {}
 
 # Legal-MCP specific configuration
 legalMcp:
-  # -- Transport mode: stdio or sse
-  transport: sse
-  # -- Port for SSE transport (must match service.targetPort)
+  # -- Transport mode: stdio, sse (deprecated), or streamable-http (recommended)
+  # The CLI uses subcommands, not --transport flag:
+  #   python -m app stdio           # Local CLI mode
+  #   python -m app sse             # SSE server (deprecated)
+  #   python -m app streamable-http # Streamable HTTP (recommended)
+  transport: streamable-http
+  # -- Server host (used for sse and streamable-http transports)
+  host: "0.0.0.0"
+  # -- Server port (must match service.targetPort, not used for stdio)
   port: 8000
   # -- Log level: DEBUG, INFO, WARNING, ERROR
   logLevel: INFO
   # -- Enable debug mode
   debug: false
+  # -- Custom command override (optional, for advanced use)
+  # command: ["python", "-m", "app"]
+  # -- Custom args override (optional, overrides transport/port)
+  # args: ["streamable-http", "--port", "8000"]
 
 # -- Environment variables (in addition to legalMcp config)
 env: []
@@ -170,6 +180,8 @@ persistence:
   annotations: {}
 
 # Probes configuration
+# By default, probes use TCP socket checks since FastMCP doesn't have a /health endpoint.
+# To use HTTP probes, set httpGet.path and httpGet.port under each probe.
 probes:
   liveness:
     # -- Enable liveness probe
@@ -182,6 +194,10 @@ probes:
     timeoutSeconds: 5
     # -- Failure threshold
     failureThreshold: 3
+    # -- HTTP GET probe (optional, defaults to TCP socket if not set)
+    # httpGet:
+    #   path: /health
+    #   port: http
   readiness:
     # -- Enable readiness probe
     enabled: true
@@ -193,6 +209,10 @@ probes:
     timeoutSeconds: 3
     # -- Failure threshold
     failureThreshold: 3
+    # -- HTTP GET probe (optional, defaults to TCP socket if not set)
+    # httpGet:
+    #   path: /health
+    #   port: http
 
 # Pod Disruption Budget configuration
 podDisruptionBudget:
