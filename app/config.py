@@ -113,6 +113,61 @@ class Settings(BaseSettings):
         description="TEI reranker server URL for two-stage retrieval.",
     )
 
+    # ColBERT re-ranking configuration
+    colbert_reranking_enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable local ColBERT re-ranking using MaxSim late interaction. "
+            "When enabled, search results from ChromaDB are re-ranked using "
+            "VAGOsolutions/SauerkrautLM-Reason-EuroColBERT for improved precision. "
+            "Requires ~800MB model download on first use."
+        ),
+    )
+    colbert_reranking_model: str = Field(
+        default="VAGOsolutions/SauerkrautLM-Reason-EuroColBERT",
+        description=(
+            "HuggingFace model ID for the ColBERT re-ranker. Must be a model "
+            "with EuroBERT backbone + Dense projection head in sentence-transformers "
+            "ColBERT format."
+        ),
+    )
+    colbert_reranking_top_k: int = Field(
+        default=10,
+        ge=1,
+        le=200,
+        description=(
+            "Number of top results to return after ColBERT re-ranking. "
+            "This is the final result count presented to the user or RAG pipeline."
+        ),
+    )
+    colbert_retrieval_candidates: int = Field(
+        default=100,
+        ge=10,
+        le=1000,
+        description=(
+            "Number of candidate documents to retrieve from ChromaDB before "
+            "ColBERT re-ranking. More candidates improve recall but increase "
+            "re-ranking latency. Should be significantly larger than "
+            "colbert_reranking_top_k."
+        ),
+    )
+    colbert_device: str = Field(
+        default="auto",
+        description=(
+            "Device for ColBERT model inference. 'auto' selects CUDA if available "
+            "with sufficient memory, otherwise CPU. Explicit values: 'cpu', 'cuda'."
+        ),
+    )
+    colbert_batch_size: int = Field(
+        default=32,
+        ge=1,
+        le=256,
+        description=(
+            "Batch size for document encoding during ColBERT re-ranking. "
+            "Larger batches are faster but use more memory."
+        ),
+    )
+
     # LLM configuration for RAG
     llm_provider: Literal["ollama", "vllm", "openai"] = Field(
         default="vllm",

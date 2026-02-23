@@ -35,6 +35,8 @@ if TYPE_CHECKING:
 class _FakeSettings:
     embedding_model: str = "fake-embedding-model"
     chroma_persist_path: str = "/tmp/fake-chroma-persist"
+    colbert_reranking_enabled: bool = False
+    colbert_retrieval_candidates: int = 100
 
 
 @dataclass(frozen=True)

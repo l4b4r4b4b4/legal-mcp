@@ -460,6 +460,11 @@ def search_laws(
 
     Convenience function for quick searches without managing the store directly.
 
+    When ColBERT re-ranking is enabled (``COLBERT_RERANKING_ENABLED=true``),
+    retrieves more candidates from ChromaDB and re-ranks them using MaxSim
+    late-interaction scoring for improved precision. Falls back gracefully
+    to original ChromaDB ordering if re-ranking fails.
+
     Args:
         query: Search query text
         n_results: Maximum results to return
@@ -485,6 +490,12 @@ def search_laws(
         persist_path=store_path,
     )
 
+    # When ColBERT re-ranking is enabled, retrieve more candidates
+    # so the re-ranker has a larger pool to select from.
+    retrieval_count = n_results
+    if settings.colbert_reranking_enabled:
+        retrieval_count = max(n_results, settings.colbert_retrieval_candidates)
+
     # Build metadata filter
     # ChromaDB requires $and operator for multiple conditions
     where: dict[str, Any] | None = None
@@ -501,7 +512,11 @@ def search_laws(
     elif level:
         where = {"level": {"$eq": level}}
 
-    results = store.search(query, n_results=n_results, where=where)
+    results = store.search(query, n_results=retrieval_count, where=where)
+
+    # Optional ColBERT re-ranking step
+    if settings.colbert_reranking_enabled and len(results) > 0:
+        results = _colbert_rerank_results(query, results, n_results)
 
     return [
         {
@@ -512,3 +527,65 @@ def search_laws(
         }
         for r in results
     ]
+
+
+def _colbert_rerank_results(
+    query: str,
+    results: list[Any],
+    top_k: int,
+) -> list[Any]:
+    """Re-rank search results using ColBERT MaxSim scoring.
+
+    Gracefully falls back to original results if re-ranking fails
+    (e.g., model download fails, out of memory).
+
+    Args:
+        query: The search query text.
+        results: List of ``SearchResult`` objects from ChromaDB.
+        top_k: Number of top results to return after re-ranking.
+
+    Returns:
+        Re-ranked (and possibly truncated) list of ``SearchResult`` objects,
+        or original results if re-ranking fails.
+    """
+    try:
+        from app.reranking.colbert_reranker import get_colbert_reranker
+
+        reranker = get_colbert_reranker()
+
+        # Extract full document content for re-ranking
+        document_texts = [result.content for result in results]
+
+        reranked = reranker.rerank_sync(
+            query=query,
+            documents=document_texts,
+            top_k=top_k,
+            return_text=False,
+        )
+
+        # Reorder original results based on re-rank scores
+        reranked_results = []
+        for rerank_result in reranked:
+            original = results[rerank_result.index]
+            # Update distance to reflect re-rank score ordering.
+            # Higher MaxSim score → lower distance (more relevant).
+            # Normalize to 0-1 range for consistency with ChromaDB distances.
+            original.distance = 1.0 - (
+                rerank_result.score / max(r.score for r in reranked)
+            )
+            reranked_results.append(original)
+
+        logger.info(
+            "ColBERT re-ranked %d candidates → top %d results",
+            len(results),
+            len(reranked_results),
+        )
+
+        return reranked_results
+
+    except Exception as error:
+        logger.warning(
+            "ColBERT re-ranking failed, using original ChromaDB ordering: %s",
+            error,
+        )
+        return results[:top_k]

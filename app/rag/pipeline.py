@@ -128,11 +128,38 @@ class RAGPipeline:
 
     @property
     def reranker(self) -> Any:
-        """Lazy-load reranker to avoid startup overhead."""
-        if self._reranker is None and self.use_reranker:
-            from app.rag.reranker import get_reranker
+        """Lazy-load reranker to avoid startup overhead.
 
-            self._reranker = get_reranker()
+        Selects the reranker implementation based on configuration:
+        - If ``colbert_reranking_enabled`` is True, uses local ColBERT
+          MaxSim re-ranker (VAGOsolutions/SauerkrautLM-Reason-EuroColBERT).
+        - Otherwise, uses the TEI HTTP reranker (default).
+
+        Falls back to TEI if ColBERT reranker fails to initialize.
+        """
+        if self._reranker is None and self.use_reranker:
+            from app.config import get_settings
+
+            settings = get_settings()
+
+            if settings.colbert_reranking_enabled:
+                try:
+                    from app.reranking.colbert_reranker import get_colbert_reranker
+
+                    self._reranker = get_colbert_reranker()
+                    logger.info("RAG pipeline using ColBERT reranker")
+                except Exception as error:
+                    logger.warning(
+                        "ColBERT reranker init failed, falling back to TEI: %s",
+                        error,
+                    )
+                    from app.rag.reranker import get_reranker
+
+                    self._reranker = get_reranker()
+            else:
+                from app.rag.reranker import get_reranker
+
+                self._reranker = get_reranker()
         return self._reranker
 
     async def _retrieve(

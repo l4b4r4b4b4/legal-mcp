@@ -264,7 +264,7 @@ vllm-embeddings-retrieval:
 - [x] User approved plan
 - [x] Documented decisions in this scratchpad
 
-### Task-02: Add ColBERT Re-Ranking Layer — ⚪ Not Started
+### Task-02: Add ColBERT Re-Ranking Layer — 🟢 COMPLETE
 
 #### ⚠️ CRITICAL: PyLate Dependency Conflict
 - `pylate>=1.3.0` **pins** `sentence-transformers==5.1.1`
