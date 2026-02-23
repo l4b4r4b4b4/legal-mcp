@@ -95,7 +95,7 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
 # Default port for HTTP transport
-EXPOSE 8000
+EXPOSE 9685
 
 # Labels for container metadata
 LABEL org.opencontainers.image.source="https://github.com/l4b4r4b4b4/legal-mcp"

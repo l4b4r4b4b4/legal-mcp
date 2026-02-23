@@ -44,12 +44,18 @@
       "env": {
         "PYTHONUNBUFFERED": "1",
         "USE_TEI": "true",
-        "TEI_URL": "http://localhost:8011",
+        "TEI_URL": "http://localhost:8013",
+        "CHROMA_HOST": "localhost",
+        "CHROMA_PORT": "8001",
       },
     },
-    // "legal-mcp-server-local": {
+    "legal-mcp-server-local": {
+      "command": "npx",
+      "args": ["mcp-remote", "http://localhost:9685/mcp"],
+    },
+    // "legal-mcp-sse-local": {
     //   "command": "npx",
-    //   "args": ["mcp-remote", "http://localhost:8000/mcp"],
+    //   "args": ["mcp-remote", "http://localhost:9685/sse"],
     // },
     // "legal-mcp-lib": {
     //   "command": "uvx",

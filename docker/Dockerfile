@@ -2,11 +2,11 @@
 # Extends the base image with the template application
 #
 # Build: docker build -f docker/Dockerfile -t legal-mcp:latest .
-# Run:   docker run -p 8000:8000 legal-mcp:latest
+# Run:   docker run -p 9685:9685 legal-mcp:latest
 #
 # The server uses streamable-http transport (recommended for remote/Docker).
 # Configure via environment variables:
-#   FASTMCP_PORT: Server port (default: 8000)
+#   FASTMCP_PORT: Server port (default: 9685)
 #   FASTMCP_HOST: Server host (default: 0.0.0.0)
 #   CACHE_BACKEND: Cache backend - memory, sqlite, redis (default: redis for HTTP)
 #   REDIS_URL: Redis connection URL (default: redis://localhost:6379)

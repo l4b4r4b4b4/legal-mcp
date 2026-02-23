@@ -6,7 +6,7 @@ Environment Variables:
     CACHE_BACKEND: Cache backend type - memory, sqlite, redis (default: auto)
     REDIS_URL: Redis connection URL (default: redis://localhost:6379)
     SQLITE_PATH: SQLite database path (default: XDG data dir)
-    FASTMCP_PORT: Server port for HTTP modes (default: 8000)
+    FASTMCP_PORT: Server port for HTTP modes (default: 9685)
     FASTMCP_HOST: Server host for HTTP modes (default: 0.0.0.0)
     LANGFUSE_PUBLIC_KEY: Langfuse public key (optional)
     LANGFUSE_SECRET_KEY: Langfuse secret key (optional)
@@ -248,7 +248,7 @@ class Settings(BaseSettings):
 
     # Server configuration (for HTTP modes)
     fastmcp_port: int = Field(
-        default=8000,
+        default=9685,
         ge=1,
         le=65535,
         description="Server port for SSE and streamable-http modes.",

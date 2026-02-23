@@ -34,7 +34,7 @@ services:
         - PYTHON_VERSION=${PYTHON_VERSION:-3.12}
     image: ghcr.io/l4b4r4b4b4/legal-mcp:latest
     ports:
-      - "8000:8000"
+      - "${FASTMCP_PORT:-9685}:9685"
     volumes:
       - chroma_data:/app/.local/share/legal-mcp/chroma
     networks:
@@ -46,7 +46,7 @@ services:
           "CMD",
           "python3",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
+          "import urllib.request; urllib.request.urlopen('http://localhost:9685/health')",
         ]
       interval: 30s
       timeout: 10s
@@ -68,6 +68,7 @@ services:
       # TEI embedding server (running in docproc-platform stack)
       - USE_TEI=${USE_TEI:-true}
       - TEI_URL=http://tei-embeddings:8080
+      - FASTMCP_PORT=9685
     restart: unless-stopped
 
   # Development server with hot reload
@@ -78,7 +79,7 @@ services:
       args:
         - PYTHON_VERSION=${PYTHON_VERSION:-3.12}
     ports:
-      - "8000:8000"
+      - "${FASTMCP_PORT:-9685}:9685"
     volumes:
       - ./app:/app/app:ro
       - chroma_data:/app/.local/share/legal-mcp/chroma
@@ -95,6 +96,7 @@ services:
       - WARMUP_MAX_LAWS=${WARMUP_MAX_LAWS:-}
       - USE_TEI=${USE_TEI:-true}
       - TEI_URL=http://tei-embeddings:8080
+      - FASTMCP_PORT=9685
     profiles:
       - dev
 

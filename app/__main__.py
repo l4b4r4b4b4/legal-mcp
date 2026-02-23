@@ -7,7 +7,7 @@ Usage:
     uvx legal-mcp warmup          # Ingest pre-downloaded HTML corpus into ChromaDB
 
 Environment Variables:
-    FASTMCP_PORT: Server port for HTTP modes (default: 8000)
+    FASTMCP_PORT: Server port for HTTP modes (default: 9685)
     FASTMCP_HOST: Server host for HTTP modes (default: 0.0.0.0)
     CACHE_BACKEND: Cache backend - memory, sqlite, redis (default: auto)
     REDIS_URL: Redis connection URL (default: redis://localhost:6379)
@@ -37,7 +37,7 @@ def _get_host() -> str:
 
 def _get_port() -> int:
     """Get server port from environment."""
-    return int(os.environ.get("FASTMCP_PORT", "8000"))
+    return int(os.environ.get("FASTMCP_PORT", "9685"))
 
 
 def _print_startup_info(transport: str) -> None:
