@@ -1,4 +1,4 @@
-# Task-02: Add ColBERT Re-Ranking Layer — 🟢 Complete
+# Task-02: Add ColBERT Re-Ranking Layer — 🟢 Complete (code), 🟡 Functional Testing In Progress
 
 ## Objective
 
@@ -153,3 +153,45 @@ colbert_batch_size: int = 32
 - **Lint clean** (ruff check + ruff format)
 - **ColBERT module coverage: 91%** (`app/reranking/colbert_reranker.py`)
 - **Overall coverage: 67%** (pre-existing gap from `local_pipeline.py` 0%, `warmup.py` 26%, `embeddings.py` 21%)
+
+### Functional Testing (via MCP protocol probe on streamable-http :9685)
+
+| Probe | Status | Notes |
+|-------|--------|-------|
+| Server startup | ✅ | New code starts on port 9685 |
+| `/health` endpoint | ✅ | Clean JSON health response |
+| MCP `initialize` | ✅ | Protocol handshake, session established |
+| `tools/list` | ✅ | All **19 tools** registered |
+| `health_check` tool call | ✅ | Returns server status |
+| `get_law_stats` tool call | ✅ | Tool works (ChromaDB shows empty state) |
+| `search_laws` tool call | ⏱️ | Timeout — TEI connection refused on 8013 during test |
+
+### Port Change (separate commit)
+- Default FASTMCP_PORT changed from 8000 → **9685** across:
+  - `app/config.py`, `app/__main__.py`
+  - `docker-compose.yml` (both services)
+  - `docker/Dockerfile`, `docker/Dockerfile.base`, `docker/Dockerfile.dev`
+- `.zed/settings.json` updated:
+  - `TEI_URL`: `http://localhost:8011` → `http://localhost:8013` (actual mapped port)
+  - Added `CHROMA_HOST=localhost`, `CHROMA_PORT=8001`
+  - Uncommented `legal-mcp-server-local` → `http://localhost:9685/mcp`
+
+### Infrastructure State (discovered during testing)
+
+| Service | Container | Host Port | Status |
+|---------|-----------|-----------|--------|
+| `legal-mcp` (OLD image) | legal-mcp | 8002 | Healthy ✅ |
+| `tei-embeddings` | tei-embeddings | 8013 | Healthy ✅ |
+| `chromadb` | chromadb | 8001 | Unhealthy ⚠️ |
+
+- ChromaDB has **0 collections** — corpus never ingested
+- TEI on 8013 was healthy to curl but refused connections from the MCP server process during search_laws (intermittent?)
+- The existing Docker `legal-mcp` container runs the OLD published image (no ColBERT code)
+
+## Next Steps (for next session)
+
+1. **Start local server on 9685** and connect via `legal-mcp-server-local` in Zed settings
+2. **Ingest test corpus** — need to run `warmup` or ingest a few laws into ChromaDB so `search_laws` returns data
+3. **Test search_laws end-to-end** — verify results come back, then enable ColBERT and compare
+4. **Test ColBERT toggle** — set `COLBERT_RERANKING_ENABLED=true`, verify model downloads and reranking works
+5. **Continue to Task-03** (pre-compute embeddings) if functional tests pass

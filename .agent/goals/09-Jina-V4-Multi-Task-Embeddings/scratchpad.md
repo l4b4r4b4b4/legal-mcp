@@ -264,7 +264,21 @@ vllm-embeddings-retrieval:
 - [x] User approved plan
 - [x] Documented decisions in this scratchpad
 
-### Task-02: Add ColBERT Re-Ranking Layer — 🟢 COMPLETE
+### Task-02: Add ColBERT Re-Ranking Layer — 🟢 COMPLETE (code + unit tests), 🟡 Functional testing in progress
+
+- [x] `ColBERTReranker` class in `app/reranking/colbert_reranker.py` (794 lines, 91% coverage)
+- [x] MaxSim scoring, lazy model loading, GPU/CPU auto-detection, idle timeout
+- [x] 6 config toggles in `app/config.py` (disabled by default, zero behavior change)
+- [x] Integration into `pipeline.search_laws()` (sync) and `rag/pipeline.py` (async)
+- [x] 65 new tests (297 total), lint clean
+- [x] Functional MCP probe: server starts, 19 tools listed, health_check + get_law_stats work
+- [x] Port changed to 9685 across all config, Docker, settings.json
+- [x] `.zed/settings.json` fixed: TEI→8013, ChromaDB→8001, `legal-mcp-server-local` uncommented
+- [ ] End-to-end `search_laws` with corpus data (ChromaDB has 0 collections)
+- [ ] Test with `COLBERT_RERANKING_ENABLED=true` (needs model download ~800MB)
+
+**Commits:** `943b6151` feat: ColBERT reranker, `879b62fd` chore: port 9685 + settings fix
+**Details:** See `Task-02-ColBERT-Reranking/scratchpad.md`
 
 #### ⚠️ CRITICAL: PyLate Dependency Conflict
 - `pylate>=1.3.0` **pins** `sentence-transformers==5.1.1`
