@@ -16,7 +16,7 @@
 | 06 | Multi-Jurisdiction Legal Framework | ⚪ Not Started | P1 (High) | 2026-02-07 |
 | 07 | International Construction Law Corpus | ⚪ Not Started | P1 (High) | 2026-02-07 |
 | 08 | Cross-Jurisdiction Comparison Tool | ⚪ Not Started | P2 (Medium) | 2026-02-07 |
-| 09 | Jina v4 Multi-Task Embeddings + Pre-Seeded Corpus + Helm + Release | ⚪ Not Started | P0 (Critical) | 2025-07-23 |
+| 09 | Pre-Seeded Embeddings + ColBERT Reranking + Helm + Release v0.1.0 | 🟡 In Progress | P0 (Critical) | 2025-07-24 |
 
 ---
 
@@ -50,7 +50,7 @@
 - [06-Multi-Jurisdiction-Legal-Framework](./06-Multi-Jurisdiction-Legal-Framework/scratchpad.md) — Abstract jurisdiction adapters for international legal corpus
 - [07-International-Construction-Law-Corpus](./07-International-Construction-Law-Corpus/scratchpad.md) — Build preprocessed legal corpora (1 country per continent) for construction law
 - [08-Cross-Jurisdiction-Comparison-Tool](./08-Cross-Jurisdiction-Comparison-Tool/scratchpad.md) — Compare legislation across jurisdictions for compliance analysis
-- [09-Jina-V4-Multi-Task-Embeddings](./09-Jina-V4-Multi-Task-Embeddings/scratchpad.md) — Upgrade to Jina v4 multi-task embeddings, pre-seeded corpus, Helm autoscaling tiers, release v0.1.0
+- [09-Jina-V4-Multi-Task-Embeddings](./09-Jina-V4-Multi-Task-Embeddings/scratchpad.md) — Pre-seeded v2-base-de embeddings, ColBERT re-ranking (SauerkrautLM-Reason-EuroColBERT), Helm autoscaling tiers, release v0.1.0
 
 ---
 
@@ -74,15 +74,22 @@
 
 ## Recent Activity
 
-- **2025-07-23:** Goal 09 created — Jina v4 Multi-Task Embeddings + Pre-Seeded Corpus
-  - Upgrade from jina-v2-base-de (161M, 768-dim) to jina-v4 (4B, 2048-dim, 32K context)
-  - **BLOCKER**: Jina v3/v4 both have restrictive licenses (CC BY-NC / Qwen Research) — user needs permissive for business
-  - Alternatives researched: BGE-M3 (MIT), GTE-Qwen2-1.5B (Apache 2.0) — see scratchpad
-  - User mentioned "Vago Solutions" as alternative — HF org 404'd, need correct name
-  - User prefers vLLM for embeddings (v4 has official vLLM support with pre-merged task adapters)
-  - Pre-compute multi-task embeddings for 58K HTML corpus, pre-seed ChromaDB collections
-  - Consolidate Helm chart (delete stale `charts/`, keep `.devops/helm/`), add autoscaling tiers
-  - 13 uncommitted files on `main` must be committed first
+- **2025-07-24:** Goal 09 Task-00 COMPLETE + Task-01 COMPLETE — decisions resolved
+  - Task-00: Committed 15 files on `feature/goal-09-embeddings-upgrade` (3 commits), pushed
+  - Task-01: Model selection resolved — stay on jina-v2-base-de + add ColBERT re-ranking
+  - Deleted stale `charts/` dir, added to `.gitignore`
+  - Added `huggingface-hub` as dev dependency for model research via CLI/API
+  - **Decision**: Keep `jinaai/jina-embeddings-v2-base-de` (Apache 2.0) on HF-TEI for dense embeddings
+  - **Decision**: Add `VAGOsolutions/SauerkrautLM-Reason-EuroColBERT` (210M, Apache 2.0) as ColBERT re-ranker
+  - VAGOsolutions org found (`VAGOsolutions` on HF) — ColBERT Late Interaction models, not dense
+  - ColBERT incompatible with ChromaDB (multi-vector per doc) → use as re-ranker only
+  - Jina v3/v4 both non-permissive (CC BY-NC / Qwen Research) — ruled out
+  - Next: Task-02 (add ColBERT re-ranking layer), Task-03 (pre-compute embeddings)
+- **2025-07-23:** Goal 09 created — research and planning session
+  - Full repo review: 4 commits on main + 13 uncommitted files + 1 stash
+  - Corpus: 58,255 HTML files, 2,631 laws (448MB), ChromaDB empty (168K)
+  - Researched Jina v3/v4, BGE-M3, GTE-Qwen2-1.5B as alternatives
+  - Helm chart at `.devops/helm/`, stale empty `charts/` to delete
   - Target release: v0.1.0
 - **2026-02-07 01:00:** Goal 05 PR #1 blocked on test coverage
   - All Helm/DevOps work complete (chart, CD pipeline, values files)

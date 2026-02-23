@@ -1,97 +1,81 @@
-# Goal 09: Jina v4 Multi-Task Embeddings + Pre-Seeded Corpus + Helm + Release
+# Goal 09: Pre-Seeded Embeddings + ColBERT Reranking + Helm + Release v0.1.0
 
-> **Status**: ⚪ Not Started
-> **Priority**: P1 (High)
+> **Status**: 🟡 In Progress
+> **Priority**: P0 (Critical)
 > **Created**: 2025-07-23
-> **Updated**: 2025-07-23
+> **Updated**: 2025-07-24
 
 ---
 
 ## Overview
 
-Upgrade the embedding pipeline from `jinaai/jina-embeddings-v2-base-de` (161M params, 768-dim, Apache 2.0) to `jinaai/jina-embeddings-v4` (4B params, 2048-dim, 32K context) served via **vLLM**. Pre-compute multi-task embeddings for the entire German federal law corpus (58,255 HTML files across 2,631 laws). Ship pre-seeded ChromaDB collections in the Docker image and git repo. Add a proper Helm chart with tiered autoscaling. Test locally (stdio + Docker SSE). Release as v0.1.0.
+Keep `jinaai/jina-embeddings-v2-base-de` (161M params, 768-dim, Apache 2.0) on HF-TEI for first-stage dense embeddings in ChromaDB. Add **SauerkrautLM-Reason-EuroColBERT** (210M, Apache 2.0) as a **ColBERT late-interaction re-ranker** on top for precision. Pre-compute embeddings for the entire German federal law corpus (58,255 HTML files across 2,631 laws) at 3 chunk granularities (law, norm, paragraph). Ship pre-seeded ChromaDB collections in the Docker image and git repo. Add proper Helm chart with tiered autoscaling. Test locally (stdio + Docker SSE). Release as v0.1.0.
 
 ---
 
-## Open Decisions (MUST Resolve Before Implementation)
+## Resolved Decisions
 
-### 1. Model Selection — License Problem
+### 1. Model Selection — RESOLVED ✅
 
-**All Jina v3+ models have restrictive licenses:**
+**Decision**: Stay on `jinaai/jina-embeddings-v2-base-de` (Apache 2.0) for dense embeddings.
+Add `VAGOsolutions/SauerkrautLM-Reason-EuroColBERT` (Apache 2.0) for ColBERT re-ranking.
 
-| Model | Params | Dim | Context | License | Tasks |
-|-------|--------|-----|---------|---------|-------|
-| `jina-embeddings-v2-base-de` (current) | 161M | 768 | 8192 | **Apache 2.0** ✅ | Single-task |
-| `jina-embeddings-v3` | 0.6B | 1024 | 8192 | **CC BY-NC 4.0** ❌ | 5 LoRA tasks |
-| `jina-embeddings-v4` | 4B | 2048 | 32768 | **Qwen Research License** ❌ | 3 tasks + multimodal |
+**Rationale (from research session 2025-07-24):**
+- Jina v3 (CC BY-NC 4.0) and v4 (Qwen Research) are both **non-permissive** — blocked for commercial use
+- VAGOsolutions models (org: `VAGOsolutions` on HF) are Apache 2.0 ✅
+- VAGOsolutions uses **ColBERT Late Interaction** (PyLate/Voyager) — fundamentally different from dense embeddings
+  - Multi-vector per document (one 128-dim vector per token), not single-vector
+  - Requires PyLate + Voyager HNSW, NOT compatible with ChromaDB
+  - Would require replacing entire storage backend — too disruptive
+- **Hybrid approach**: Keep ChromaDB + v2-base-de for fast ANN first-stage, add ColBERT re-ranking for precision
+- v2-base-de is single-task (no retrieval/clustering/classification modes), but re-ranker compensates
+- v2-base-de has 864K downloads/month, German-specialized, battle-tested
 
-**User's stated preference**: v4 (32K context, multi-task, vLLM native support)
+| Component | Model | Params | License | Role |
+|-----------|-------|--------|---------|------|
+| Dense embeddings | `jinaai/jina-embeddings-v2-base-de` | 161M | Apache 2.0 | First-stage ANN retrieval via ChromaDB |
+| Re-ranker | `VAGOsolutions/SauerkrautLM-Reason-EuroColBERT` | 210M | Apache 2.0 | Second-stage precision re-ranking |
 
-**User's concern**: Needs permissive for business use → v3 and v4 both fail this
+### 2. Serving Backend — RESOLVED ✅
 
-**User mentioned "Vago Solutions"** as potential alternative — `huggingface.co/Vago-Solutions` returns 404. Need correct org name from user.
+**Decision**: HF-TEI for embeddings (current setup, no change). PyLate for ColBERT re-ranking (new).
 
-**Action needed**: User must decide:
-- (a) Accept Jina v4 Qwen Research License (free for research, needs commercial license)
-- (b) Accept Jina v3 CC BY-NC 4.0 (non-commercial)
-- (c) Pay Jina AI for commercial license (available via Azure/AWS marketplace)
-- (d) Find the correct "Vago Solutions" (or similar) permissively-licensed alternative
-- (e) Stick with v2-base-de (Apache 2.0, but single-task, German-only, smaller)
+**Rationale:**
+- v2-base-de works perfectly on TEI — no reason to change
+- ColBERT re-ranking uses PyLate library at query time (encode query + re-rank candidates)
+- No vLLM needed for this iteration
+- Re-ranker runs on CPU or GPU; only invoked on top-K candidates (not full corpus)
 
-### 2. vLLM vs TEI for Embedding Inference
+### 3. Pre-Computed Embedding Storage — RESOLVED ✅
 
-**User prefers vLLM** for superior inference performance (continuous batching, etc.)
+**Decision**: Single ChromaDB collection with multi-level chunks. Git LFS for pre-built data.
 
-**Jina v4 has official vLLM support** with pre-merged adapter models:
-- `jinaai/jina-embeddings-v4-vllm-retrieval`
-- `jinaai/jina-embeddings-v4-vllm-text-matching`
-- `jinaai/jina-embeddings-v4-vllm-code`
-
-These are **separate model checkpoints** (adapters merged into base weights), so vLLM can serve them natively without `trust_remote_code`. Each task requires its own vLLM instance or model swap.
-
-**Jina v3** does NOT have pre-merged vLLM variants. It uses LoRA adapters dynamically at inference. TEI handles this natively. vLLM would need custom code to handle `adapter_mask` tensors.
-
-**Architecture implications for v4 + vLLM:**
-- Need **2-3 separate vLLM instances** (one per task: retrieval, text-matching, code)
-- OR a single vLLM instance that swaps models (not great for latency)
-- Memory: 4B BF16 ≈ 8GB VRAM per instance → 16-24GB total for 2-3 tasks
-- For pre-computation: can run sequentially (one task at a time)
-- For runtime search: need at least the retrieval model running
-
-**TEI alternative**: Single TEI instance serving v3 handles all tasks via the `task` parameter. Uses ~2GB VRAM. But user explicitly prefers vLLM.
-
-**Recommendation**: Use vLLM for v4 if license is acceptable. Otherwise TEI for v3, or keep v2 with TEI.
-
-### 3. Pre-Computed Embedding Storage Strategy
-
-**Corpus stats:**
-- 58,255 HTML files → ~50K+ document chunks after parsing
-- Current multi-level chunking: law → norm → paragraph
-
-**Storage math per task (50K docs × 2048-dim × float32):**
-- ~400MB per task as raw numpy
-- ~200MB per task as float16
-- 3 tasks × 200MB = ~600MB total
-
-**Options:**
-| Strategy | Size | Git-Friendly | Startup Speed |
-|----------|------|-------------|---------------|
-| ChromaDB SQLite committed to repo | ~1-2GB (with HNSW index) | ⚠️ Large binary | ⚡ Instant (copy file) |
-| Parquet files + seed script | ~600MB | ⚠️ LFS needed | 🐌 Build index at start |
-| Git LFS for chroma.sqlite3 | ~1-2GB | ✅ LFS | ⚡ Instant |
-| Docker image layer only | ~1-2GB | ✅ Not in git | ⚡ Instant in Docker |
-| Download from release artifact | ~600MB | ✅ Clean repo | 🐌 Network at start |
-
-**User's requirement**: "pre-computed embeddings should be added and committed to the repo and chroma collection(s) pre-seeded at initial mcp app / server start"
-
-**User's quality requirement**: "encode embedding model / task used as well as specific hnsw params for the respective collection in collection's and chunk's / document's metadata"
-
-**Recommendation**: 
-- Git LFS for a pre-built `data/chroma/` directory (the SQLite + WAL files)
-- One ChromaDB collection per task (e.g., `german_laws_retrieval`, `german_laws_text_matching`)
-- Each collection's metadata encodes: model name, model version, task, embedding dimension, HNSW params (M, efConstruction, efSearch, space)
-- Each document's metadata encodes: embedding model, task, chunk level, law_abbrev, norm_id, etc.
+**Rationale:**
+- v2-base-de is single-task → one collection `german_laws` (not per-task collections)
+- Differentiate by **chunk granularity** (law/norm/paragraph) via metadata, not separate collections
+- Storage math: 50K docs × 768-dim × float32 ≈ 150MB raw + HNSW index ≈ 300-500MB total
+- Git LFS for `data/chroma/` directory
 - Docker COPY for instant startup
+- Collection metadata encodes: model name, model version, embedding dimension, HNSW params
+- Document metadata encodes: chunk_level, law_abbrev, norm_id, embedding_model
+
+### 4. VAGOsolutions Research Notes
+
+**Org**: `VAGOsolutions` on HuggingFace (not `Vago-Solutions` — that 404s)
+**Focus**: German-specialized LLMs ("SauerkrautLM" series) and retrieval models
+**Key retrieval models (all Apache 2.0):**
+
+| Model | Params | Architecture | German nDCG@10 | Notes |
+|-------|--------|-------------|----------------|-------|
+| SauerkrautLM-Reason-EuroColBERT | 210M | ColBERT/EuroBERT | 47.71 (NanoBEIR), 16.43 (BRIGHT) | Best German reasoning, beats 7B models |
+| SauerkrautLM-Multi-ModernColBERT | 149M | ColBERT/ModernBERT | 51.21 (NanoBEIR) | Better general retrieval |
+| SauerkrautLM-Multi-Reason-ModernColBERT | 149M | ColBERT/ModernBERT | — | Reasoning + multilingual |
+
+**Why ColBERT as re-ranker, not primary retrieval:**
+- ColBERT stores N vectors per document (one per token) — incompatible with ChromaDB
+- Requires PyLate + Voyager HNSW index — completely different storage paradigm
+- Re-ranking only runs on top-K candidates, so cost is manageable
+- Gets us the quality benefit without replacing the entire storage layer
 
 ---
 
@@ -166,7 +150,45 @@ Single collection: `german_laws`
 
 ---
 
-## Jina v4 Technical Details
+## Architecture (Revised Target State)
+
+```
+Query flow:
+                                    ┌─ TEI (jina-v2-base-de) ──→ 768-dim embedding
+                                    │
+User query ──→ config ──────────────┤
+                                    │
+                                    └─ Local model manager (fallback)
+                                               │
+                                               ▼
+                                    ChromaDB ANN search (top-100 candidates)
+                                               │
+                                               ▼
+                                    ColBERT re-ranker (SauerkrautLM-Reason-EuroColBERT)
+                                    PyLate MaxSim scoring on candidates
+                                               │
+                                               ▼
+                                    Top-10 final results (high precision)
+
+Pre-computation flow:
+  58,255 HTML files ──→ local_pipeline.py (parse + chunk)
+         │                  │
+         │           law-level chunks
+         │           norm-level chunks
+         │           paragraph-level chunks
+         │                  │
+         │                  ▼
+         │           TEI batch embed (jina-v2-base-de, 768-dim)
+         │                  │
+         │                  ▼
+         └──────→ ChromaDB collection: `german_laws`
+                    metadata: chunk_level, law_abbrev, norm_id, embedding_model
+                    stored in: data/chroma/ (Git LFS)
+```
+
+---
+
+## Jina v4 Technical Details (Historical Research — NOT USING)
 
 ### Model Card Summary
 - **Base**: Qwen2.5-VL-3B-Instruct
@@ -218,81 +240,97 @@ vllm-embeddings-retrieval:
 
 ---
 
-## Task Breakdown
+## Task Breakdown (Revised)
 
-### Task-00: Commit Uncommitted Work (Prerequisite)
-- Create feature branch `feature/goal-09-jina-v4-embeddings`
-- Commit all 13 modified + 2 untracked files with descriptive message
-- Run lint + tests to verify nothing is broken
-- Push branch
+### Task-00: Commit Uncommitted Work (Prerequisite) — 🟢 COMPLETE
+- [x] Create feature branch `feature/goal-09-embeddings-upgrade`
+- [x] Commit all 15 modified/untracked files (warmup, local pipeline, TEI multi-endpoint, config, Docker)
+- [x] Commit Goal 09 scratchpad and goals index update
+- [x] Delete stale `charts/` directory, add to `.gitignore`
+- [x] Add `huggingface-hub` as dev dependency for model research
+- [x] Run lint + tests (232 passed, ruff clean)
+- [x] Push branch
 
-### Task-01: Model Selection Resolution
-- Present license comparison to user
-- Research "Vago Solutions" or alternatives if user needs permissive license
-- Alternatives to research: `BAAI/bge-m3`, `intfloat/multilingual-e5-large-instruct`, `Alibaba-NLP/gte-Qwen2-7B-instruct`
-- Decide final model + serving backend
-- Document decision in this scratchpad
+**Commits:**
+- `2471c2a6` feat: add warmup system, local ingestion pipeline, TEI multi-endpoint, and dev tooling
+- `5c04d103` docs: add Goal 09 scratchpad and update goals index
+- `d5a94f0a` chore: remove stale charts/ directory, add to .gitignore
 
-### Task-02: Embedding Pipeline Refactor
-- Add vLLM embedding client (OpenAI-compatible `/v1/embeddings` endpoint)
-- Support task-specific endpoint routing (different ports/URLs per task)
-- Refactor `GermanLawEmbeddingStore` for multi-collection architecture
-- One collection per task: `german_laws_retrieval`, `german_laws_text_matching`, etc.
-- Collection metadata: `embedding_model`, `model_version`, `task`, `embedding_dimension`, `hnsw_M`, `hnsw_efConstruction`, `hnsw_space`
-- Document metadata per chunk: all existing fields + `embedding_model`, `embedding_task`, `embedding_dim`
-- Matryoshka dimension configurable (default 1024 for storage efficiency, or 2048 for max quality)
-- Update `app/config.py` with new settings
+### Task-01: Model Selection Resolution — 🟢 COMPLETE
+- [x] Researched VAGOsolutions org (`VAGOsolutions` on HF, not `Vago-Solutions`)
+- [x] Found SauerkrautLM ColBERT suite — Apache 2.0, German-specialized, excellent quality
+- [x] Identified ColBERT architecture incompatibility with ChromaDB (multi-vector vs single-vector)
+- [x] Proposed hybrid: v2-base-de (dense, ChromaDB) + EuroColBERT (ColBERT re-ranker)
+- [x] User approved plan
+- [x] Documented decisions in this scratchpad
 
-### Task-03: Pre-Compute Embeddings Script
+### Task-02: Add ColBERT Re-Ranking Layer — ⚪ Not Started
+- Add `pylate` dependency for ColBERT inference
+- Create `app/reranking/colbert_reranker.py`:
+  - Load `VAGOsolutions/SauerkrautLM-Reason-EuroColBERT` via PyLate
+  - `rerank(query: str, candidates: list[dict]) -> list[dict]` function
+  - Encode query as ColBERT query embedding, encode candidates as document embeddings
+  - Score via MaxSim, return re-ordered candidates with scores
+  - Lazy model loading with configurable GPU/CPU
+- Create `app/reranking/__init__.py`
+- Update `app/config.py` with reranking settings:
+  - `reranking_enabled: bool = True`
+  - `reranking_model: str = "VAGOsolutions/SauerkrautLM-Reason-EuroColBERT"`
+  - `reranking_top_k: int = 10` (final results after re-ranking)
+  - `retrieval_top_k: int = 100` (candidates from ChromaDB before re-ranking)
+- Integrate into search tools: ChromaDB → top-100 → ColBERT re-rank → top-10
+- Config toggle to disable re-ranking (fallback to current behavior)
+
+### Task-03: Pre-Compute Embeddings Script — ⚪ Not Started
 - New script: `scripts/precompute_embeddings.py`
 - Reads corpus from `data/html/` (58,255 files, 2,631 laws)
 - Parses using existing `local_pipeline.py` logic
-- Embeds via vLLM endpoints (one task at a time for GPU efficiency)
-- Stores into ChromaDB with full metadata
+- Embeds via TEI (jina-v2-base-de, 768-dim)
+- Stores into ChromaDB single collection `german_laws` with full metadata:
+  - Collection metadata: `embedding_model`, `model_version`, `embedding_dimension`, `hnsw_M`, `hnsw_efConstruction`, `hnsw_space`
+  - Document metadata: `chunk_level` (law/norm/paragraph), `law_abbrev`, `norm_id`, `embedding_model`
+- 3 chunk granularities: law-level summary, norm-level, paragraph-level
 - Progress tracking, resumability (skip already-embedded docs)
 - Outputs to `data/chroma/` directory
-- Must run on GPU machine with vLLM serving the models
 
-### Task-04: Pre-Seed at Startup
-- If ChromaDB collections are empty AND `data/chroma/` has pre-built data → copy/import
+### Task-04: Pre-Seed at Startup — ⚪ Not Started
+- If ChromaDB collection is empty AND `data/chroma/` has pre-built data → copy/import
 - For Docker: COPY `data/chroma/` at build time, mount as volume
 - For local dev: `data/chroma/` in git (LFS if >100MB)
 - Modify `app/warmup.py` to detect pre-seeded state and skip re-ingestion
-- Health endpoint reports which collections are loaded + document counts
+- Health endpoint reports collection status + document counts
 
-### Task-05: Helm Chart Consolidation + Autoscaling Tiers
-- Delete stale `charts/legal-mcp/` directory
+### Task-05: Helm Chart Consolidation + Autoscaling Tiers — ⚪ Not Started
 - Enhance `.devops/helm/legal-mcp/` chart with:
   - Tiered autoscaling profiles in values:
     - **Small** (dev/testing): 1 replica, no HPA, 512Mi-1Gi
     - **Medium** (staging): 1-3 replicas, HPA on CPU 70%, 1-2Gi
     - **Large** (production): 2-10 replicas, HPA on CPU+memory, PDB, 2-4Gi
-  - GPU node affinity/tolerations for embedding inference pods
-  - Separate deployment for vLLM embedding server (optional sidecar or standalone)
+  - TEI sidecar or standalone deployment for embedding inference
   - ChromaDB as optional dependency (external service or embedded)
   - Pre-seeded data volume (PVC or emptyDir with init container)
   - Probes using HTTP `/health` endpoint (already implemented)
 - Values files: `values/small.yaml`, `values/medium.yaml`, `values/large.yaml`
 
-### Task-06: Docker + Local Testing
-- Update `docker-compose.gpu.yml` with vLLM embedding config (per task)
-- Update `docker-compose.yml` for non-GPU (TEI fallback or pre-seeded only)
-- Test stdio mode: `uv run legal-mcp stdio` → verify search works with pre-seeded data
+### Task-06: Docker + Local Testing — ⚪ Not Started
+- Update `docker-compose.yml` for TEI + ColBERT re-ranker
+- Update `docker-compose.gpu.yml` for GPU-accelerated re-ranking
+- Test stdio mode: `uv run legal-mcp stdio` → verify search + re-ranking with pre-seeded data
 - Test Docker SSE: `docker compose up` → verify search, health endpoint
 - Run test suite, ensure ≥73% coverage
 
-### Task-07: Version Bump + Release
+### Task-07: Version Bump + Release — ⚪ Not Started
 - Bump `pyproject.toml` version to `0.1.0`
 - Bump `app/__init__.py` (auto from `importlib.metadata`)
 - Bump `.devops/helm/legal-mcp/Chart.yaml` appVersion
 - Update CHANGELOG.md
-- Update README.md (model info, architecture diagram)
+- Update README.md (model info, architecture diagram, re-ranking documentation)
 - Tag `v0.1.0`
 - Create GitHub release
 
 ---
 
-## Architecture (Target State)
+## Architecture (Original Plan — SUPERSEDED)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -334,7 +372,7 @@ vllm-embeddings-retrieval:
 
 ## Files to Modify / Create
 
-### Modify
+### Modify (Revised)
 - `app/config.py` — vLLM embedding endpoints, task-specific URLs, Matryoshka dim
 - `app/ingestion/embeddings.py` — multi-collection, per-task, rich metadata
 - `app/ingestion/tei_client.py` → rename/generalize to `embedding_client.py` (or add `vllm_client.py`)
@@ -403,7 +441,7 @@ document_metadata = {
 
 ---
 
-## Risks & Mitigations
+## Risks & Mitigations (Revised)
 
 | Risk | Impact | Likelihood | Mitigation |
 |------|--------|------------|------------|
@@ -417,7 +455,7 @@ document_metadata = {
 
 ---
 
-## Permissively-Licensed Alternatives to Research
+## Completed Research: Permissive Alternatives
 
 If Jina license is a blocker, investigate these multi-task / multilingual options:
 
