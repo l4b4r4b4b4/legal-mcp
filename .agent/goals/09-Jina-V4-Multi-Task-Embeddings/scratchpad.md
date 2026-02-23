@@ -265,21 +265,94 @@ vllm-embeddings-retrieval:
 - [x] Documented decisions in this scratchpad
 
 ### Task-02: Add ColBERT Re-Ranking Layer — ⚪ Not Started
-- Add `pylate` dependency for ColBERT inference
-- Create `app/reranking/colbert_reranker.py`:
-  - Load `VAGOsolutions/SauerkrautLM-Reason-EuroColBERT` via PyLate
-  - `rerank(query: str, candidates: list[dict]) -> list[dict]` function
-  - Encode query as ColBERT query embedding, encode candidates as document embeddings
-  - Score via MaxSim, return re-ordered candidates with scores
-  - Lazy model loading with configurable GPU/CPU
-- Create `app/reranking/__init__.py`
-- Update `app/config.py` with reranking settings:
-  - `reranking_enabled: bool = True`
-  - `reranking_model: str = "VAGOsolutions/SauerkrautLM-Reason-EuroColBERT"`
-  - `reranking_top_k: int = 10` (final results after re-ranking)
-  - `retrieval_top_k: int = 100` (candidates from ChromaDB before re-ranking)
-- Integrate into search tools: ChromaDB → top-100 → ColBERT re-rank → top-10
-- Config toggle to disable re-ranking (fallback to current behavior)
+
+#### ⚠️ CRITICAL: PyLate Dependency Conflict
+- `pylate>=1.3.0` **pins** `sentence-transformers==5.1.1`
+- Our project requires `sentence-transformers>=5.2.0`
+- **Resolution**: Do NOT use `pylate`. Load model via `transformers` directly + custom MaxSim.
+- The model is simple: EuroBERT backbone (768-dim tokens) + Dense head (Linear 768→128, no bias)
+
+#### Model Architecture (from HF repo inspection)
+```
+modules.json:
+  [0] sentence_transformers.models.Transformer → EuroBERT-210m (768-dim token output)
+  [1] pylate.models.Dense.Dense → Linear(768→128, bias=False, Identity activation)
+
+config_sentence_transformers.json:
+  query_prefix: "[Q] "
+  document_prefix: "[D] "
+  query_length: 256
+  document_length: 2048
+  similarity_fn_name: "MaxSim"
+  skiplist_words: punctuation characters (filter from token embeddings)
+
+Files needed from HF:
+  model.safetensors — EuroBERT backbone weights
+  1_Dense/model.safetensors — projection head (768×128 weight matrix)
+  configuration_eurobert.py — custom config (needs trust_remote_code=True)
+  tokenizer.json, tokenizer_config.json, special_tokens_map.json
+```
+
+#### MaxSim Algorithm
+```
+1. Tokenize query with prefix "[Q] ", pad/truncate to 256 tokens
+2. Tokenize document with prefix "[D] ", pad/truncate to 2048 tokens
+3. Forward pass through EuroBERT → token embeddings (seq_len × 768)
+4. Project through Dense head → (seq_len × 128)
+5. L2-normalize each token embedding
+6. Filter out skiplist tokens (punctuation)
+7. MaxSim score = sum over query tokens of max(cosine_sim(q_token, all_doc_tokens))
+8. Sort candidates by MaxSim score descending
+```
+
+#### Two Integration Points Discovered
+1. **`search_laws` MCP tool** (primary) → `pipeline.search_laws()` → `GermanLawEmbeddingStore.search()` → ChromaDB results **with NO reranking currently**
+2. **RAG pipeline** (secondary) → `RAGPipeline._retrieve()` → `GermanLawEmbeddingStore.search()` → optional reranking via existing `TEIReranker` in `app/rag/reranker.py`
+
+The RAG pipeline already has a reranker abstraction (`TEIReranker`) with `RerankResult` dataclass and `async rerank()` method. The ColBERT reranker should implement the same interface.
+
+#### Files to Create
+- `app/reranking/__init__.py` — module init, `__all__`
+- `app/reranking/colbert_reranker.py` — main implementation:
+  - `ColBERTReranker` class (same interface as `TEIReranker` in `app/rag/reranker.py`)
+  - Load EuroBERT via `transformers.AutoModel.from_pretrained(trust_remote_code=True)`
+  - Load Dense head from `1_Dense/model.safetensors` via `safetensors.torch.load_file()`
+  - Lazy model loading (first call to `rerank()` loads model)
+  - GPU/CPU auto-detection with configurable device
+  - `async rerank(query, documents, top_k, return_text) -> list[RerankResult]`
+  - Batch encoding for documents (configurable batch size)
+  - Model idle timeout + cleanup (match pattern in existing `app/ingestion/embeddings.py`)
+  - Singleton via `get_colbert_reranker()` (match pattern in `app/rag/reranker.py`)
+
+#### Files to Modify
+- `app/config.py` — add reranking settings:
+  - `colbert_reranking_enabled: bool = False` (default off, opt-in)
+  - `colbert_reranking_model: str = "VAGOsolutions/SauerkrautLM-Reason-EuroColBERT"`
+  - `colbert_reranking_top_k: int = 10` (final results after re-ranking)
+  - `colbert_retrieval_candidates: int = 100` (candidates from ChromaDB before re-ranking)
+  - `colbert_device: str = "auto"` (auto/cpu/cuda)
+  - `colbert_batch_size: int = 32`
+- `app/ingestion/pipeline.py` — add optional reranking step to `search_laws()`:
+  - After ChromaDB search (top-100), apply ColBERT re-ranking (return top-10)
+  - Gated by config `colbert_reranking_enabled`
+  - Graceful fallback if model fails to load
+- `app/rag/pipeline.py` — update `reranker` property to optionally use `ColBERTReranker` instead of `TEIReranker`
+  - Config-driven: if `colbert_reranking_enabled`, use ColBERT; else use TEI (current behavior)
+- `app/tools/german_laws.py` — increase default `n_results` when reranking is enabled (need more candidates)
+
+#### Tests to Write
+- `tests/test_colbert_reranker.py`:
+  - Test MaxSim scoring with mock embeddings (deterministic)
+  - Test reranker with mocked model (don't download 800MB model in CI)
+  - Test graceful fallback when model unavailable
+  - Test config toggle (enabled/disabled)
+  - Test integration with `search_laws` pipeline (mock ChromaDB + mock reranker)
+  - Test `RerankResult` compatibility with existing RAG pipeline
+
+#### Dependencies
+- NO new PyPI dependencies needed (use existing `transformers`, `safetensors`, `torch` from sentence-transformers)
+- Model weights downloaded at runtime from HuggingFace (~800MB first load, cached after)
+- `huggingface-hub` (already added as dev dep) can pre-download for Docker builds
 
 ### Task-03: Pre-Compute Embeddings Script — ⚪ Not Started
 - New script: `scripts/precompute_embeddings.py`
