@@ -93,6 +93,13 @@ class TEIEmbeddingClient:
             self._server_max_concurrent,
         )
 
+    # Servers reporting max_client_batch_size >= this threshold are
+    # considered GPU-backed and allowed larger per-request batches.
+    _GPU_BATCH_THRESHOLD: int = 32
+
+    # Conservative per-request cap for CPU / low-capacity TEI servers.
+    _CPU_BATCH_CAP: int = 8
+
     def _detect_server_batch_size(self) -> int | None:
         """Detect a safe per-request batch size from the /info endpoint.
 
@@ -102,6 +109,11 @@ class TEIEmbeddingClient:
         constraint, so we pick the *minimum* of the reported client batch
         size and a token-budget-derived heuristic (tokens / 2048 average
         legal-text length, floored at 2).
+
+        GPU-backed servers (identified by ``max_client_batch_size >= 32``)
+        are allowed much larger batches — up to the server's own limit —
+        because they have the VRAM and throughput to handle them.  CPU or
+        low-capacity servers are capped conservatively at 8 texts/request.
 
         Returns:
             A safe per-request batch size, or None if detection fails.
@@ -134,17 +146,28 @@ class TEIEmbeddingClient:
             ):
                 safe_limit = min(safe_limit or 4, 4)
 
-            # Hard cap: never exceed 8 per request for legal workloads
+            # Apply tier-appropriate cap based on server capacity.
+            is_gpu_server = (
+                client_limit is not None
+                and isinstance(client_limit, int)
+                and client_limit >= self._GPU_BATCH_THRESHOLD
+            )
             if safe_limit is not None:
-                safe_limit = min(safe_limit, 8)
+                if is_gpu_server:
+                    # GPU server — respect its reported limit (typically 64-128).
+                    safe_limit = min(safe_limit, client_limit)  # type: ignore[arg-type]
+                else:
+                    # CPU / low-capacity — conservative cap for legal texts.
+                    safe_limit = min(safe_limit, self._CPU_BATCH_CAP)
 
             if safe_limit is not None:
                 logger.info(
                     "Detected TEI safe batch size: %d "
-                    "(client_limit=%s, token_budget=%s)",
+                    "(client_limit=%s, token_budget=%s, gpu=%s)",
                     safe_limit,
                     client_limit,
                     token_budget,
+                    is_gpu_server,
                 )
             return safe_limit
         except Exception as error:
@@ -258,10 +281,18 @@ class TEIEmbeddingClient:
         # Decide concurrency based on server capacity.
         # Low-capacity servers (max_concurrent_requests <= 8, typical for CPU)
         # are processed sequentially to avoid 429s.  High-capacity servers
-        # (GPU with many replicas) can handle 2-3 concurrent requests.
+        # (GPU with large request queues) benefit from concurrent batches
+        # that keep the inference pipeline saturated.
         server_capacity = self._server_max_concurrent or 5
-        # Sequential for CPU TEI / single-replica; mild concurrency for GPU
-        max_workers = 1 if server_capacity <= 8 else min(3, len(batches))
+        if server_capacity <= 8:
+            # CPU TEI / single-replica — sequential to avoid 429s
+            max_workers = 1
+        elif server_capacity >= 512:
+            # GPU server with large queue — moderate concurrency
+            max_workers = min(6, len(batches))
+        else:
+            # Mid-range — light concurrency
+            max_workers = min(3, len(batches))
 
         if max_workers <= 1:
             # Sequential processing — no thread pool overhead.

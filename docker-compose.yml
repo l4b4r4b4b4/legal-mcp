@@ -9,7 +9,7 @@
 #   HttpClient (recommended for Docker):
 #     The included chromadb service runs automatically.
 #     legal-mcp connects to it via CHROMA_HOST=chromadb on the internal network.
-#     For local dev outside Docker, connect to localhost:8001.
+#     For local dev outside Docker, connect to localhost:9720.
 #   PersistentClient (local dev without server):
 #     Leave CHROMA_HOST unset — falls back to local file-based ChromaDB.
 #     Requires the full `chromadb` package (not `chromadb-client`).
@@ -32,7 +32,7 @@ services:
     image: chromadb/chroma:latest
     container_name: legal-mcp-chromadb
     ports:
-      - "${CHROMA_EXTERNAL_PORT:-8001}:8000"
+      - "${CHROMA_EXTERNAL_PORT:-9720}:8000"
     volumes:
       - chroma_data:/chroma/chroma
     environment:

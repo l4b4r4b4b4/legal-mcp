@@ -15,8 +15,8 @@ Environment Variables:
     CHROMA_PORT: ChromaDB server HTTP port (default: 8000)
     EMBEDDING_MODEL: Sentence-transformers model name (default: jina-embeddings-v2-base-de)
     USE_TEI: Use TEI server for embeddings instead of local model (default: false)
-    TEI_URL: TEI server URL (default: http://localhost:8011)
-    RERANKER_URL: TEI reranker server URL (default: http://localhost:8020)
+    TEI_URL: TEI server URL (default: http://localhost:9721)
+    RERANKER_URL: TEI reranker server URL (default: http://localhost:9722)
     LLM_PROVIDER: LLM provider - ollama, vllm, openai (default: ollama)
     LLM_MODEL: Model name for the provider (default: llama3.2)
     LLM_API_BASE: Override API base URL (optional)
@@ -105,11 +105,11 @@ class Settings(BaseSettings):
         description="Use TEI server for embeddings instead of local model. Much better GPU memory management.",
     )
     tei_url: str = Field(
-        default="http://localhost:8011",
+        default="http://localhost:9721",
         description="TEI server URL for HTTP-based embeddings.",
     )
     reranker_url: str = Field(
-        default="http://localhost:8020",
+        default="http://localhost:9722",
         description="TEI reranker server URL for two-stage retrieval.",
     )
 
@@ -178,7 +178,7 @@ class Settings(BaseSettings):
         description="Model name for the LLM provider. Default matches docker-compose.gpu.yml vLLM served-model-name.",
     )
     llm_api_base: str | None = Field(
-        default="http://localhost:7373/v1",
+        default="http://localhost:9723/v1",
         description="Override API base URL for LLM provider. Default matches docker-compose.gpu.yml vLLM port.",
     )
     llm_temperature: float = Field(

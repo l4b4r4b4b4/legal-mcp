@@ -1,10 +1,45 @@
+# Docker Compose — GPU-accelerated stack for Legal-MCP
+#
+# Requires CDI-capable Docker runtime (nvidia GPU device plugin).
+# See: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/cdi-support.html
+#
+# Usage:
+#   docker compose -f docker-compose.gpu.yml up -d chromadb tei-embeddings   # Minimal: embed only
+#   docker compose -f docker-compose.gpu.yml up -d                           # Full stack (all GPUs shared)
+#   docker compose -f docker-compose.gpu.yml run --rm test                   # Smoke-test GPU access
+#
+# Pre-compute corpus embeddings (after starting chromadb + tei-embeddings):
+#   python scripts/precompute_embeddings.py            # uses 972X defaults
+#   python scripts/precompute_embeddings.py --status   # check corpus status
+#
+# Port range: 972X (avoids conflicts with docproc-platform on 80XX)
+#   9720  ChromaDB
+#   9721  TEI embeddings
+#   9722  TEI reranker
+#   9723  vLLM
+#   9685  legal-mcp server (unchanged)
+#
+# GPU memory budget (RTX 3080 Ti 12 GB example):
+#   tei-embeddings  ~1.0 GB  (jina-v2-base-de 161M params, flash attn)
+#   tei-reranker    ~1.2 GB  (bge-reranker-v2-m3 568M params)
+#   vllm            ~5.5 GB  (Mistral-7B-AWQ, gpu_memory_utilization=0.55)
+#   ColBERT local   ~1.0 GB  (EuroColBERT 210M, loaded on-demand at query time)
+#   ─────────────────────────
+#   Total           ~8.7 GB  (fits in 12 GB with headroom)
+
 volumes:
   hf_cache:
+  chroma_data:
 
 services:
+  # ---------------------------------------------------------------------------
+  # GPU smoke test — run once to verify CDI device access
+  # ---------------------------------------------------------------------------
   test:
     image: nvidia/cuda:12.9.0-base-ubuntu22.04
     command: nvidia-smi
+    profiles:
+      - test
     deploy:
       resources:
         reservations:
@@ -12,36 +47,51 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-  # gpu-service:
-  #   image: nvidia/cuda:11.8.0-base-ubuntu22.04
-  #   # The key part for CDI GPU access:
-  #   device_cgroup_rules:
-  #     - "c 195:* rmw"
-  #     - "c 236:* rmw"
-  #   devices:
-  #     - nvidia.com/gpu=all
-  #   command: nvidia-smi
 
-  # # Another example with a specific GPU
-  # specific-gpu-service:
-  #   image: nvidia/cuda:11.8.0-base-ubuntu22.04
-  #   device_cgroup_rules:
-  #     - "c 195:* rmw"
-  #     - "c 236:* rmw"
-  #   devices:
-  #     - nvidia.com/gpu=0 # Use only the first GPU
-  #   command: nvidia-smi
-
-  embeddings:
+  # ---------------------------------------------------------------------------
+  # ChromaDB vector store
+  # ---------------------------------------------------------------------------
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: legal-mcp-chromadb
+    ports:
+      - "${CHROMA_EXTERNAL_PORT:-9720}:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    environment:
+      - CHROMA_SERVER_HOST=0.0.0.0
+      - CHROMA_SERVER_HTTP_PORT=8000
+      - ANONYMIZED_TELEMETRY=false
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "echo -e 'GET /api/v2/heartbeat HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' | timeout 2 bash -c 'cat > /dev/tcp/localhost/8000' && exit 0 || exit 1",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
     deploy:
-      replicas: 4
+      resources:
+        limits:
+          memory: 2G
+
+  # ---------------------------------------------------------------------------
+  # TEI — dense embeddings (jina-v2-base-de, 768-dim, Apache 2.0)
+  #
+  # Single replica for pre-compute workloads.  Scale to N replicas for
+  # production serving (ports must be adjusted or use a load balancer).
+  # ---------------------------------------------------------------------------
+  tei-embeddings:
     image: ghcr.io/huggingface/text-embeddings-inference:86-1.6
+    container_name: legal-mcp-tei-embeddings
+    ports:
+      - "${TEI_EMBEDDINGS_PORT:-9721}:8080"
     volumes:
       - hf_cache:/.hf_cache
-    ports:
-      - "8011-8014:8080"
     ipc: host
-    # Replace runtime with devices for CDI
     devices:
       - nvidia.com/gpu=all
     device_cgroup_rules:
@@ -53,17 +103,17 @@ services:
       - USE_FLASH_ATTENTION=True
       - HF_HUB_ENABLE_HF_TRANSFER=1
       - HF_HOME=/.hf_cache
-      - RUST_LOG=info
-      # Performance tuning for embedding models
+      - RUST_LOG=${TEI_LOG_LEVEL:-info}
       - OMP_NUM_THREADS=8
       - MKL_NUM_THREADS=8
       - TOKENIZERS_PARALLELISM=true
-    restart: no
+      - RAYON_NUM_THREADS=8
     env_file: .env
+    restart: unless-stopped
     command:
       [
         "--model-id",
-        "jinaai/jina-embeddings-v2-base-de",
+        "${TEI_EMBEDDINGS_MODEL:-jinaai/jina-embeddings-v2-base-de}",
         "--hostname",
         "0.0.0.0",
         "--port",
@@ -96,18 +146,21 @@ services:
         max-size: "100m"
         max-file: "1"
 
-  rerankings:
-    deploy:
-      replicas: 1
+  # ---------------------------------------------------------------------------
+  # TEI — cross-encoder reranker (bge-reranker-v2-m3)
+  #
+  # Used by the RAG pipeline for two-stage retrieval.
+  # ColBERT local reranking (EuroColBERT) is handled in-process by the
+  # legal-mcp server on CUDA — this TEI reranker is a separate option.
+  # ---------------------------------------------------------------------------
+  tei-reranker:
     image: ghcr.io/huggingface/text-embeddings-inference:86-1.6
+    container_name: legal-mcp-tei-reranker
+    ports:
+      - "${TEI_RERANKER_PORT:-9722}:8080"
     volumes:
       - hf_cache:/.hf_cache
-    ports:
-      - 8020:8080
-    container_name: rerankings
-    env_file: .env
     ipc: host
-    # Replace runtime with devices for CDI
     devices:
       - nvidia.com/gpu=all
     device_cgroup_rules:
@@ -119,17 +172,16 @@ services:
       - USE_FLASH_ATTENTION=True
       - HF_HUB_ENABLE_HF_TRANSFER=1
       - HF_HOME=/.hf_cache
-
-      - RUST_LOG=info
-      # Performance tuning for reranking models
+      - RUST_LOG=${TEI_LOG_LEVEL:-info}
       - OMP_NUM_THREADS=8
       - MKL_NUM_THREADS=8
       - TOKENIZERS_PARALLELISM=true
-    restart: no
+    env_file: .env
+    restart: unless-stopped
     command:
       [
         "--model-id",
-        "BAAI/bge-reranker-v2-m3",
+        "${TEI_RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}",
         "--hostname",
         "0.0.0.0",
         "--port",
@@ -162,38 +214,41 @@ services:
         max-size: "100m"
         max-file: "1"
 
+  # ---------------------------------------------------------------------------
+  # vLLM — LLM inference for RAG generation
+  # ---------------------------------------------------------------------------
   vllm:
-    deploy:
-      replicas: 1
+    image: vllm/vllm-openai:latest
+    container_name: legal-mcp-vllm
+    ports:
+      - "${VLLM_PORT:-9723}:80"
     volumes:
       - hf_cache:/.hf_cache
-    restart: no
-    image: vllm/vllm-openai:latest
-    ports:
-      - 7373:80
+    ipc: host
+    devices:
+      - nvidia.com/gpu=all
     device_cgroup_rules:
       - "c 195:* rmw"
       - "c 236:* rmw"
-    devices:
-      - nvidia.com/gpu=all
     environment:
-      - HUGGING_FACE_HUB_TOKEN=${HUGGINGFACEHUB_API_TOKEN:-your_hf_api_access_token}
+      - HUGGING_FACE_HUB_TOKEN=${HUGGINGFACEHUB_API_TOKEN:-}
       - HF_HOME=/.hf_cache
       - NVIDIA_VISIBLE_DEVICES=all
       - VLLM_ATTENTION_BACKEND=FLASHINFER
       - HF_HUB_ENABLE_HF_TRANSFER=1
       - MAX_PARALLEL_LOADING_WORKERS=4
-    ipc: host
     env_file: .env
-    command: [
+    restart: unless-stopped
+    command:
+      [
         "--host",
         "0.0.0.0",
         "--port",
         "80",
         "--model",
-        "solidrust/Mistral-7B-Instruct-v0.3-AWQ",
+        "${VLLM_MODEL:-solidrust/Mistral-7B-Instruct-v0.3-AWQ}",
         "--served-model-name",
-        "uai/lm-small",
+        "${VLLM_SERVED_NAME:-uai/lm-small}",
         "--max-model-len",
         "4096",
         "--max-num-batched-tokens",
@@ -202,22 +257,17 @@ services:
         "fp8",
         "--quantization",
         "awq",
-        # "--dtype",
-        # "float16",
         "--enable-auto-tool-choice",
         "--tool-call-parser",
-        "mistral", # llama3_json
+        "mistral",
         "--chat-template",
-        "examples/tool_chat_template_mistral_parallel.jinja", # tool_chat_template_llama3_json
+        "examples/tool_chat_template_mistral_parallel.jinja",
         "--cpu-offload-gb",
-        "${LLM_CPU_OFFLOAD_SPACE}",
+        "${LLM_CPU_OFFLOAD_SPACE:-0}",
         "--gpu-memory-utilization",
-        "0.55",
-        # "--block-size",
-        # "32",
+        "${VLLM_GPU_MEM_UTIL:-0.55}",
         "--swap-space",
-        "${LLM_SWAP_SPACE}",
-        # "--trust-remote-code",
+        "${LLM_SWAP_SPACE:-4}",
         "--seed",
         "4269",
         "--max-num-seqs",
@@ -225,16 +275,15 @@ services:
         "--trust-remote-code",
         "--enable-prefix-caching",
         "--enable-chunked-prefill",
-        # "--disable-sliding-window",
-        # "--max-paddings",
-        # "16",
-        # "--enable-chunked-prefill", # Not possible together with prfix caching enabled
-        # "--enforce-eager",
-        # "--max-parallel-loading-workers",
-        # "2"
       ]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://vllm:80/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
       interval: 30s
       timeout: 5s
       retries: 5
+      start_period: 120s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "1"

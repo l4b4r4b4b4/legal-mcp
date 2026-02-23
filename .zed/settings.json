@@ -44,9 +44,9 @@
       "env": {
         "PYTHONUNBUFFERED": "1",
         "USE_TEI": "true",
-        "TEI_URL": "http://localhost:8013",
+        "TEI_URL": "http://localhost:9721",
         "CHROMA_HOST": "localhost",
-        "CHROMA_PORT": "8001",
+        "CHROMA_PORT": "9720",
       },
     },
     "legal-mcp-server-local": {
