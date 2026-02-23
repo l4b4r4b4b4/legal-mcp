@@ -4,6 +4,7 @@ Usage:
     uvx legal-mcp stdio           # Local CLI mode (Claude Desktop)
     uvx legal-mcp sse             # SSE server mode (deprecated)
     uvx legal-mcp streamable-http # Streamable HTTP (recommended for remote)
+    uvx legal-mcp warmup          # Ingest pre-downloaded HTML corpus into ChromaDB
 
 Environment Variables:
     FASTMCP_PORT: Server port for HTTP modes (default: 8000)
@@ -12,6 +13,9 @@ Environment Variables:
     REDIS_URL: Redis connection URL (default: redis://localhost:6379)
     LANGFUSE_PUBLIC_KEY: Langfuse public key (optional)
     LANGFUSE_SECRET_KEY: Langfuse secret key (optional)
+    WARMUP_ON_STARTUP: Enable automatic corpus warm-up (default: false)
+    WARMUP_MAX_LAWS: Max laws to ingest during warm-up (default: all)
+    WARMUP_HTML_ROOT: Path to pre-downloaded HTML corpus (default: data/html)
 """
 
 import os
@@ -47,6 +51,38 @@ def _print_startup_info(transport: str) -> None:
     typer.echo("Context propagation: enabled (user_id, session_id, metadata)")
 
 
+def _maybe_start_warmup() -> None:
+    """Start background corpus warm-up if configured.
+
+    Reads WARMUP_ON_STARTUP from settings. If enabled, starts a background
+    thread that ingests the pre-downloaded HTML corpus into ChromaDB.
+    The server remains fully available while warm-up runs.
+    """
+    from .config import get_settings
+
+    settings = get_settings()
+
+    if not settings.warmup_on_startup:
+        return
+
+    from .warmup import start_background_warmup
+
+    typer.echo("Corpus warm-up: starting in background...")
+    started = start_background_warmup(
+        html_root=settings.warmup_html_root,
+        max_laws=settings.warmup_max_laws,
+        batch_size=settings.warmup_batch_size,
+        max_workers=settings.warmup_max_workers,
+    )
+    if started:
+        typer.echo(
+            f"Corpus warm-up: ingesting from {settings.warmup_html_root} "
+            f"(max_laws={settings.warmup_max_laws or 'all'})"
+        )
+    else:
+        typer.echo("Corpus warm-up: already running or skipped")
+
+
 def _handle_shutdown() -> None:
     """Handle graceful shutdown."""
     from .tracing import flush_traces
@@ -68,6 +104,7 @@ def stdio() -> None:
     from .server import mcp
 
     _print_startup_info("stdio")
+    _maybe_start_warmup()
 
     try:
         mcp.run(transport="stdio")
@@ -100,6 +137,7 @@ def sse(
     server_port = port or _get_port()
 
     _print_startup_info("sse")
+    _maybe_start_warmup()
     typer.echo(f"Server: http://{server_host}:{server_port}/sse")
     typer.secho(
         "Warning: SSE transport is deprecated. Use streamable-http instead.",
@@ -138,6 +176,7 @@ def streamable_http(
     server_port = port or _get_port()
 
     _print_startup_info("streamable-http")
+    _maybe_start_warmup()
     typer.echo(f"Server: http://{server_host}:{server_port}/mcp")
 
     try:
@@ -152,6 +191,112 @@ def streamable_http(
         sys.exit(1)
     finally:
         _handle_shutdown()
+
+
+@app.command()
+def warmup(
+    max_laws: int = typer.Option(
+        None,
+        "--max-laws",
+        "-n",
+        help="Maximum laws to ingest (default: all ~6400). Use 10-50 for testing.",
+    ),
+    html_root: str = typer.Option(
+        None,
+        "--html-root",
+        "-r",
+        help="Path to pre-downloaded HTML corpus (default: from config or data/html).",
+    ),
+    batch_size: int = typer.Option(
+        256,
+        "--batch-size",
+        "-b",
+        help="Documents per embedding batch.",
+    ),
+    max_workers: int = typer.Option(
+        8,
+        "--max-workers",
+        "-w",
+        help="Concurrent HTML parsing workers.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Force re-ingestion even if corpus is already populated.",
+    ),
+    status_only: bool = typer.Option(
+        False,
+        "--status",
+        "-s",
+        help="Only check corpus status, don't ingest.",
+    ),
+) -> None:
+    """Ingest pre-downloaded HTML corpus into ChromaDB.
+
+    Reads the HTML files from data/html/ (or --html-root) and embeds them
+    into ChromaDB using the configured embedding backend (TEI or local).
+
+    This is a synchronous (blocking) operation. Use WARMUP_ON_STARTUP=true
+    for automatic background warm-up during server startup.
+
+    Examples:
+        legal-mcp warmup --status          # Check corpus status
+        legal-mcp warmup --max-laws 10     # Quick test with 10 laws
+        legal-mcp warmup                   # Full corpus ingestion
+        legal-mcp warmup --force           # Re-ingest even if populated
+    """
+    import json
+
+    if status_only:
+        from .ingestion.local_pipeline import get_corpus_status
+
+        corpus_status = get_corpus_status()
+        typer.echo(json.dumps(corpus_status, indent=2))
+        return
+
+    from .warmup import run_warmup_sync
+
+    typer.echo("Starting corpus warm-up (synchronous)...")
+    if max_laws:
+        typer.echo(f"  max_laws: {max_laws}")
+    if html_root:
+        typer.echo(f"  html_root: {html_root}")
+    typer.echo(f"  batch_size: {batch_size}")
+    typer.echo(f"  max_workers: {max_workers}")
+    typer.echo(f"  force: {force}")
+    typer.echo("")
+
+    result = run_warmup_sync(
+        html_root=html_root,
+        max_laws=max_laws,
+        batch_size=batch_size,
+        max_workers=max_workers,
+        force=force,
+    )
+
+    typer.echo("")
+    typer.echo(json.dumps(result, indent=2))
+
+    if result.get("state") == "completed":
+        typer.secho(
+            f"Done: {result['documents_added']} documents from "
+            f"{result['laws_processed']} laws in "
+            f"{result['elapsed_seconds']}s",
+            fg=typer.colors.GREEN,
+        )
+    elif result.get("state") == "skipped":
+        typer.secho(
+            f"Skipped: {result.get('skip_reason', 'unknown reason')}",
+            fg=typer.colors.YELLOW,
+        )
+    elif result.get("state") == "failed":
+        typer.secho(
+            f"Failed: {result.get('error_message', 'unknown error')}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        sys.exit(1)
 
 
 @app.callback(invoke_without_command=True)

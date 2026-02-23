@@ -41,11 +41,15 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from chromadb.api import ClientAPI
+    from chromadb.api.types import Metadata, WhereDocument
 
 from app.config import get_settings
 from app.ingestion.embeddings import DEFAULT_MODEL_NAME
@@ -132,7 +136,7 @@ class CustomDocumentEmbeddingStore:
         default_factory=lambda: Path(get_settings().chroma_persist_path)
     )
     collection_name: str = CUSTOM_DOCUMENTS_COLLECTION_NAME
-    _client: chromadb.PersistentClient | None = field(default=None, repr=False)
+    _client: ClientAPI | None = field(default=None, repr=False)
     _collection: chromadb.Collection | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
@@ -153,15 +157,18 @@ class CustomDocumentEmbeddingStore:
         return get_embedding_model(self.model_name)
 
     @property
-    def client(self) -> chromadb.PersistentClient:
+    def client(self) -> ClientAPI:
         """Lazy-load persistent Chroma client."""
         if self._client is None:
             logger.info("Initializing ChromaDB at: %s", self.persist_path)
-            self._client = chromadb.PersistentClient(
-                path=str(self.persist_path),
-                settings=ChromaSettings(
-                    anonymized_telemetry=False,
-                    allow_reset=True,
+            self._client = cast(
+                "ClientAPI",
+                chromadb.PersistentClient(
+                    path=str(self.persist_path),
+                    settings=ChromaSettings(
+                        anonymized_telemetry=False,
+                        allow_reset=True,
+                    ),
                 ),
             )
         return self._client
@@ -178,6 +185,7 @@ class CustomDocumentEmbeddingStore:
                     "hnsw:space": "cosine",
                 },
             )
+            assert self._collection is not None  # narrowing for pyright
             logger.info(
                 "Collection '%s' ready. Document count: %d",
                 self.collection_name,
@@ -185,7 +193,7 @@ class CustomDocumentEmbeddingStore:
             )
         return self._collection
 
-    def _prepare_metadata(self, metadata: dict[str, Any]) -> dict[str, Any]:
+    def _prepare_metadata(self, metadata: dict[str, Any]) -> Metadata:
         """Prepare metadata for ChromaDB storage.
 
         ChromaDB only supports: str, int, float, bool.
@@ -195,7 +203,7 @@ class CustomDocumentEmbeddingStore:
 
         This method must not log sensitive values.
         """
-        clean_metadata: dict[str, Any] = {}
+        clean_metadata: dict[str, str | int | float | bool | None] = {}
         for key, value in metadata.items():
             if value is None:
                 continue
@@ -207,7 +215,7 @@ class CustomDocumentEmbeddingStore:
                 clean_metadata[key] = ",".join(str(item) for item in value)
                 continue
             clean_metadata[key] = str(value)
-        return clean_metadata
+        return cast("Metadata", clean_metadata)
 
     @staticmethod
     def normalize_tags_csv(tags: list[str] | None) -> str | None:
@@ -388,7 +396,7 @@ class CustomDocumentEmbeddingStore:
 
             ids: list[str] = []
             texts: list[str] = []
-            metadatas: list[dict[str, Any]] = []
+            metadatas: list[Metadata] = []
 
             for chunk in batch:
                 ids.append(chunk.chunk_id)
@@ -417,7 +425,7 @@ class CustomDocumentEmbeddingStore:
         *,
         n_results: int = 10,
         where: dict[str, Any] | None = None,
-        where_document: dict[str, Any] | None = None,
+        where_document: WhereDocument | None = None,
     ) -> list[SearchHit]:
         """Search custom documents using semantic similarity.
 
@@ -446,20 +454,20 @@ class CustomDocumentEmbeddingStore:
             include=["documents", "metadatas", "distances"],
         )
 
-        ids = raw.get("ids", [[]])[0]
-        documents = raw.get("documents", [[]])[0]
-        metadatas = raw.get("metadatas", [[]])[0]
-        distances = raw.get("distances", [[]])[0]
+        ids = (raw.get("ids") or [[]])[0]
+        documents = (raw.get("documents") or [[]])[0]
+        raw_metadatas = (raw.get("metadatas") or [[]])[0]
+        distances = (raw.get("distances") or [[]])[0]
 
         hits: list[SearchHit] = []
-        for chunk_id, content, metadata, distance in zip(
-            ids, documents, metadatas, distances, strict=False
+        for chunk_id, content, raw_meta, distance in zip(
+            ids, documents, raw_metadatas, distances, strict=False
         ):
             hits.append(
                 SearchHit(
                     chunk_id=chunk_id,
                     content=content,
-                    metadata=metadata or {},
+                    metadata=dict(raw_meta) if raw_meta else {},
                     distance=float(distance),
                 )
             )

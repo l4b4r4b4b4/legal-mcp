@@ -3,7 +3,8 @@
 This module creates and configures the FastMCP server, wiring together
 tools from the modular tools package.
 
-Includes a /health HTTP endpoint for Kubernetes liveness/readiness probes.
+Includes a /health HTTP endpoint for Kubernetes liveness/readiness probes
+and a /warmup-status endpoint for corpus ingestion progress.
 
 Features:
 - Reference-based caching for large results
@@ -211,8 +212,12 @@ async def http_health_check(request: Request) -> Response:
     """HTTP health check endpoint for Kubernetes liveness/readiness probes.
 
     Returns:
-        JSON response with health status and basic server info.
+        JSON response with health status, basic server info, and warmup state.
     """
+    from app.warmup import get_warmup_status, is_corpus_ready
+
+    warmup_status = get_warmup_status()
+
     return JSONResponse(
         {
             "status": "healthy",
@@ -220,6 +225,28 @@ async def http_health_check(request: Request) -> Response:
             "cache": {
                 "name": _cache.name,
             },
+            "corpus_ready": is_corpus_ready(),
+            "warmup": {
+                "state": warmup_status["state"],
+                "documents_added": warmup_status["documents_added"],
+                "laws_processed": warmup_status["laws_processed"],
+                "total_laws": warmup_status["total_laws"],
+            },
         },
         status_code=200,
     )
+
+
+@mcp.custom_route("/warmup-status", methods=["GET"])
+async def http_warmup_status(request: Request) -> Response:
+    """HTTP endpoint for detailed corpus warm-up status.
+
+    Returns full warm-up progress information including timing,
+    document counts, error counts, and state transitions.
+
+    Returns:
+        JSON response with detailed warm-up status.
+    """
+    from app.warmup import get_warmup_status
+
+    return JSONResponse(get_warmup_status(), status_code=200)

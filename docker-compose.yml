@@ -5,9 +5,23 @@
 #   docker compose --profile dev up      # Run development server with hot reload
 #   docker compose build                 # Build all images
 #
+# ChromaDB modes:
+#   HttpClient (recommended for Docker):
+#     Set CHROMA_HOST + CHROMA_PORT to connect to a shared ChromaDB server.
+#     No local volume needed — the chromadb service owns the data.
+#   PersistentClient (local dev without server):
+#     Leave CHROMA_HOST unset — falls back to local file-based ChromaDB.
+#     Requires the full `chromadb` package (not `chromadb-client`).
+#
 # Environment variables (optional):
 #   PYTHON_VERSION: Python version for images (default: 3.12)
+#   CHROMA_HOST: ChromaDB server hostname (default: unset → PersistentClient)
+#   CHROMA_PORT: ChromaDB server port (default: 8000)
 #   LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST
+#   WARMUP_ON_STARTUP: Enable corpus warm-up on start (default: false)
+#   WARMUP_MAX_LAWS: Max laws to ingest (default: all)
+#   USE_TEI: Use TEI server for embeddings (default: false)
+#   TEI_URL: TEI server URL (default: http://tei-embeddings:8080)
 
 services:
   # Production server
@@ -21,10 +35,39 @@ services:
     image: ghcr.io/l4b4r4b4b4/legal-mcp:latest
     ports:
       - "8000:8000"
+    volumes:
+      - chroma_data:/app/.local/share/legal-mcp/chroma
+    networks:
+      - default
+      - tei_network
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     environment:
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
       - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
+      # ChromaDB connection — HttpClient to shared server in docproc-platform
+      # When CHROMA_HOST is set, HttpClient is used (no local volume needed).
+      # When unset, falls back to PersistentClient at default XDG path.
+      - CHROMA_HOST=${CHROMA_HOST:-}
+      - CHROMA_PORT=${CHROMA_PORT:-8000}
+      # Corpus warm-up (ingest pre-downloaded HTML into ChromaDB on start)
+      - WARMUP_ON_STARTUP=${WARMUP_ON_STARTUP:-false}
+      - WARMUP_MAX_LAWS=${WARMUP_MAX_LAWS:-}
+      - WARMUP_HTML_ROOT=/app/data/html
+      # TEI embedding server (running in docproc-platform stack)
+      - USE_TEI=${USE_TEI:-true}
+      - TEI_URL=http://tei-embeddings:8080
     restart: unless-stopped
 
   # Development server with hot reload
@@ -38,10 +81,20 @@ services:
       - "8000:8000"
     volumes:
       - ./app:/app/app:ro
+      - chroma_data:/app/.local/share/legal-mcp/chroma
+    networks:
+      - default
+      - tei_network
     environment:
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
       - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
+      - CHROMA_HOST=${CHROMA_HOST:-}
+      - CHROMA_PORT=${CHROMA_PORT:-8000}
+      - WARMUP_ON_STARTUP=${WARMUP_ON_STARTUP:-false}
+      - WARMUP_MAX_LAWS=${WARMUP_MAX_LAWS:-}
+      - USE_TEI=${USE_TEI:-true}
+      - TEI_URL=http://tei-embeddings:8080
     profiles:
       - dev
 
@@ -55,3 +108,12 @@ services:
     image: ghcr.io/l4b4r4b4b4/legal-mcp-base:latest
     profiles:
       - build
+
+volumes:
+  chroma_data:
+    driver: local
+
+networks:
+  tei_network:
+    external: true
+    name: docproc-platform_default

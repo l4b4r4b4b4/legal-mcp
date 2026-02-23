@@ -80,6 +80,11 @@ COPY --from=builder /opt/venv /opt/venv
 # Set ownership
 RUN chown -R appuser:appuser /app
 
+# Pre-create ChromaDB persistence directory with correct ownership
+# so Docker volume mounts inherit the right permissions
+RUN mkdir -p /app/.local/share/legal-mcp/chroma \
+    && chown -R appuser:appuser /app/.local
+
 # Switch to non-root user
 USER appuser
 

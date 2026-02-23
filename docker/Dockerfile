@@ -23,6 +23,12 @@ FROM ${BASE_IMAGE} AS production
 # Copy application code
 COPY --chown=appuser:appuser app/ /app/app/
 
+# Copy pre-downloaded HTML corpus for warm-up ingestion into ChromaDB
+COPY --chown=appuser:appuser data/html/ /app/data/html/
+
+# Set default warm-up HTML root to the bundled corpus
+ENV WARMUP_HTML_ROOT="/app/data/html"
+
 # Default: Run MCP server with streamable-http transport (recommended for remote)
 CMD ["python", "-m", "app", "streamable-http"]
 
@@ -36,6 +42,12 @@ FROM ${BASE_IMAGE} AS development
 
 # Copy application code
 COPY --chown=appuser:appuser app/ /app/app/
+
+# Copy pre-downloaded HTML corpus for warm-up ingestion
+COPY --chown=appuser:appuser data/html/ /app/data/html/
+
+# Set default warm-up HTML root to the bundled corpus
+ENV WARMUP_HTML_ROOT="/app/data/html"
 
 # Dev mode - can override with volume mount
 CMD ["python", "-m", "app", "streamable-http"]

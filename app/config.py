@@ -11,7 +11,8 @@ Environment Variables:
     LANGFUSE_PUBLIC_KEY: Langfuse public key (optional)
     LANGFUSE_SECRET_KEY: Langfuse secret key (optional)
     LANGFUSE_HOST: Langfuse host URL (default: https://cloud.langfuse.com)
-    CHROMA_PERSIST_PATH: ChromaDB persistence directory (default: XDG data dir)
+    CHROMA_HOST: ChromaDB server hostname (default: chromadb)
+    CHROMA_PORT: ChromaDB server HTTP port (default: 8000)
     EMBEDDING_MODEL: Sentence-transformers model name (default: jina-embeddings-v2-base-de)
     USE_TEI: Use TEI server for embeddings instead of local model (default: false)
     TEI_URL: TEI server URL (default: http://localhost:8011)
@@ -22,6 +23,11 @@ Environment Variables:
     LLM_TEMPERATURE: Sampling temperature 0-2 (default: 0.1)
     LLM_MAX_TOKENS: Maximum tokens to generate (default: 1024)
     LEGAL_MCP_INGEST_ROOT: Allowlisted root directory for file-based ingestion tools (required for ingest_markdown_files)
+    WARMUP_ON_STARTUP: Enable automatic corpus warm-up on server start (default: false)
+    WARMUP_MAX_LAWS: Maximum laws to ingest during warm-up (default: all)
+    WARMUP_HTML_ROOT: Path to pre-downloaded HTML corpus (default: data/html)
+    WARMUP_BATCH_SIZE: Documents per embedding batch during warm-up (default: 256)
+    WARMUP_MAX_WORKERS: Concurrent HTML parsing workers during warm-up (default: 8)
 """
 
 from __future__ import annotations
@@ -46,11 +52,6 @@ def _get_xdg_data_home() -> Path:
 def _get_default_sqlite_path() -> str:
     """Get XDG-compliant default SQLite path."""
     return str(_get_xdg_data_home() / "legal-mcp" / "cache.db")
-
-
-def _get_default_chroma_path() -> str:
-    """Get XDG-compliant default ChromaDB path."""
-    return str(_get_xdg_data_home() / "legal-mcp" / "chroma")
 
 
 class Settings(BaseSettings):
@@ -78,10 +79,20 @@ class Settings(BaseSettings):
         description="SQLite database path for local persistence.",
     )
 
-    # ChromaDB and embedding configuration
-    chroma_persist_path: str = Field(
-        default_factory=_get_default_chroma_path,
-        description="ChromaDB persistence directory for vector storage.",
+    # ChromaDB HTTP server configuration
+    chroma_host: str | None = Field(
+        default=None,
+        description=(
+            "ChromaDB HTTP server hostname (e.g., 'chromadb', 'localhost'). "
+            "When set, HttpClient is used; when None, falls back to local "
+            "PersistentClient at chroma_persist_path."
+        ),
+    )
+    chroma_port: int = Field(
+        default=8000,
+        ge=1,
+        le=65535,
+        description="ChromaDB HTTP server port.",
     )
     embedding_model: str = Field(
         default="jinaai/jina-embeddings-v2-base-de",
@@ -138,6 +149,48 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Corpus warm-up configuration
+    warmup_on_startup: bool = Field(
+        default=False,
+        description=(
+            "Enable automatic corpus warm-up on server start. "
+            "When true, the server ingests the pre-downloaded HTML corpus into "
+            "ChromaDB in a background thread. The server remains available for "
+            "non-law tools while warm-up runs."
+        ),
+    )
+    warmup_max_laws: int | None = Field(
+        default=None,
+        ge=1,
+        le=10000,
+        description=(
+            "Maximum number of laws to ingest during warm-up. "
+            "None means all available laws (~6400). Use 10-50 for quick testing."
+        ),
+    )
+    warmup_html_root: str = Field(
+        default="data/html",
+        description=(
+            "Path to pre-downloaded HTML corpus directory. Each subdirectory "
+            "should contain .html files for one law (e.g., data/html/bgb/*.html)."
+        ),
+    )
+    warmup_batch_size: int = Field(
+        default=256,
+        ge=1,
+        le=4096,
+        description=(
+            "Documents per embedding batch during warm-up. Larger batches are "
+            "more efficient but use more memory."
+        ),
+    )
+    warmup_max_workers: int = Field(
+        default=8,
+        ge=1,
+        le=64,
+        description="Concurrent workers for HTML parsing during warm-up.",
+    )
+
     # Server configuration (for HTTP modes)
     fastmcp_port: int = Field(
         default=8000,
@@ -164,13 +217,39 @@ class Settings(BaseSettings):
         description="Langfuse host URL.",
     )
 
-    @field_validator("sqlite_path", "chroma_persist_path", "ingest_root_path")
+    @field_validator("sqlite_path", "ingest_root_path")
     @classmethod
     def expand_path(cls, value: str | None) -> str | None:
         """Expand ~ in file paths."""
         if value is None:
             return None
         return str(Path(value).expanduser())
+
+    @property
+    def chroma_url(self) -> str | None:
+        """Full ChromaDB server URL for display and logging.
+
+        Returns the URL when ``chroma_host`` is configured, signaling that
+        ``chromadb.HttpClient`` should be used.  Returns ``None`` when no
+        host is set, signaling fallback to ``PersistentClient``.
+
+        Note:
+            Do **not** pass this value to ``chromadb.HttpClient(host=...)``.
+            That parameter expects a bare hostname, not a URL.  Use
+            ``chroma_host`` and ``chroma_port`` separately instead.
+        """
+        if self.chroma_host is None:
+            return None
+        return f"http://{self.chroma_host}:{self.chroma_port}"
+
+    @property
+    def chroma_persist_path(self) -> str:
+        """XDG-compliant local ChromaDB persistence path.
+
+        Used as fallback when ``chroma_host`` is not set (i.e. no remote
+        ChromaDB server).
+        """
+        return str(_get_xdg_data_home() / "legal-mcp" / "chroma")
 
     @property
     def langfuse_enabled(self) -> bool:
