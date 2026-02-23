@@ -1,4 +1,4 @@
-# Task-02: Add ColBERT Re-Ranking Layer — 🟢 Complete (code), 🟡 Functional Testing In Progress
+# Task-02: Add ColBERT Re-Ranking Layer — 🟢 Complete
 
 ## Objective
 
@@ -163,10 +163,51 @@ colbert_batch_size: int = 32
 | MCP `initialize` | ✅ | Protocol handshake, session established |
 | `tools/list` | ✅ | All **19 tools** registered |
 | `health_check` tool call | ✅ | Returns server status |
-| `get_law_stats` tool call | ✅ | Tool works (ChromaDB shows empty state) |
-| `search_laws` tool call | ⏱️ | Timeout — TEI connection refused on 8013 during test |
+| `get_law_stats` tool call | ✅ | Returns 748 docs, 10 laws, model stats |
+| `search_laws` (no ColBERT) | ✅ | 5 results returned, top hit similarity 0.547 |
+| `search_laws` (ColBERT on) | ✅ | Reranked results, model downloaded & scored, top hit similarity 1.0 |
+| Warmup / corpus ingestion | ✅ | 748 documents from 10 laws ingested in 144s |
 
-### Port Change (separate commit)
+### Functional Testing Session — 2026-02-23
+
+**Environment:**
+- ChromaDB: `chromadb/chroma:latest` via `docker compose up -d chromadb` (host port 8001)
+- Embeddings: local sentence-transformers (`jinaai/jina-embeddings-v2-base-de`, CPU)
+- ColBERT model: `VAGOsolutions/SauerkrautLM-Reason-EuroColBERT` (downloaded on first call, ~800MB)
+- Server: `uv run legal-mcp streamable-http --port 9685` (local, not Docker)
+- Key env fix: `HF_HUB_ENABLE_HF_TRANSFER=0` (global env had =1 but `hf_transfer` package not in venv)
+
+**Corpus ingestion:**
+```
+HF_HUB_ENABLE_HF_TRANSFER=0 CHROMA_HOST=localhost CHROMA_PORT=8001 USE_TEI=false uv run legal-mcp warmup --max-laws 10
+→ 748 documents from 10 laws (AABG, AABGEBV, AAPPO, ABAG, ABAMVERWV, ABBERGV, ABBV, ABFAEV, ABGG, ABRSTV)
+```
+
+**search_laws comparison — query: "Arbeitsrecht Kündigung":**
+
+| Rank | Without ColBERT | Sim | With ColBERT | Sim |
+|------|----------------|-----|--------------|-----|
+| 1 | `abgg_para_2_abs_3` (§2 Abs.3 Kündigungsschutz) | 0.547 | `abgg_para_2` (§2 full norm — Schutz der Mandatsausübung) | 1.000 |
+| 2 | `abgg_para_57_abs_2` (§57 Geheimhaltungspflicht) | 0.395 | `abgg_para_2_abs_3` (§2 Abs.3 Kündigungsschutz) | 0.958 |
+| 3 | `abgg_para_2` (§2 full norm) | 0.383 | `abgg_para_12` (§12 Amtsausstattung) | 0.907 |
+| 4 | `abgg_para_32_abs_3` (§32 Beginn/Ende Ansprüche) | 0.376 | `abgg_para_12_abs_3` (§12 Abs.3 Beschäftigung) | 0.897 |
+| 5 | `abbergv_para_10_abs_4` (§10 Gefahren) | 0.365 | `abbergv_para_6_abs_2` (§6 Unterweisung) | 0.894 |
+
+**Key observations:**
+- ColBERT promoted the full §2 norm (contains ALL context: Kündigung + Arbeitsplatz) to #1
+- ColBERT correctly demoted irrelevant §57 (Geheimhaltungspflicht — about secrecy, not employment termination)
+- Similarity scores normalized to 0–1 range (MaxSim scores mapped via min-max normalization)
+- Over-retrieval worked: 100 candidates fetched from ChromaDB, ColBERT reranked to top 5
+
+### Docker-Compose Update (separate commit)
+- Added `chromadb` service (`chromadb/chroma:latest`) with healthcheck (v2 API)
+- `legal-mcp` and `dev` services now `depends_on: chromadb: condition: service_healthy`
+- `CHROMA_HOST` defaults to `chromadb` (was empty/unset — required external server)
+- `TEI_URL` now configurable via env var (was hardcoded)
+- `tei_network` changed from `external: true` to auto-create (stack is self-contained)
+- Host port 8001 for local dev access (`CHROMA_EXTERNAL_PORT`)
+
+### Port Change (earlier commit)
 - Default FASTMCP_PORT changed from 8000 → **9685** across:
   - `app/config.py`, `app/__main__.py`
   - `docker-compose.yml` (both services)
@@ -176,22 +217,17 @@ colbert_batch_size: int = 32
   - Added `CHROMA_HOST=localhost`, `CHROMA_PORT=8001`
   - Uncommented `legal-mcp-server-local` → `http://localhost:9685/mcp`
 
-### Infrastructure State (discovered during testing)
+## Task-02 Complete ✅
 
-| Service | Container | Host Port | Status |
-|---------|-----------|-----------|--------|
-| `legal-mcp` (OLD image) | legal-mcp | 8002 | Healthy ✅ |
-| `tei-embeddings` | tei-embeddings | 8013 | Healthy ✅ |
-| `chromadb` | chromadb | 8001 | Unhealthy ⚠️ |
+All success criteria met:
+- [x] ColBERT reranker implemented (794 lines, 91% coverage)
+- [x] 65 unit tests, all 297 tests pass, lint clean
+- [x] Functional e2e: warmup → search_laws → ColBERT rerank — all working
+- [x] Docker-compose self-contained with ChromaDB service
+- [x] Committed and pushed to `feature/goal-09-embeddings-upgrade`
 
-- ChromaDB has **0 collections** — corpus never ingested
-- TEI on 8013 was healthy to curl but refused connections from the MCP server process during search_laws (intermittent?)
-- The existing Docker `legal-mcp` container runs the OLD published image (no ColBERT code)
+## Next Steps
 
-## Next Steps (for next session)
-
-1. **Start local server on 9685** and connect via `legal-mcp-server-local` in Zed settings
-2. **Ingest test corpus** — need to run `warmup` or ingest a few laws into ChromaDB so `search_laws` returns data
-3. **Test search_laws end-to-end** — verify results come back, then enable ColBERT and compare
-4. **Test ColBERT toggle** — set `COLBERT_RERANKING_ENABLED=true`, verify model downloads and reranking works
-5. **Continue to Task-03** (pre-compute embeddings) if functional tests pass
+1. **Continue to Task-03** — pre-compute ColBERT embeddings at ingestion time
+2. **Optional:** Test with GPU (CUDA) when available for performance benchmarking
+3. **Optional:** Test with TEI embeddings when docproc-platform stack is running
