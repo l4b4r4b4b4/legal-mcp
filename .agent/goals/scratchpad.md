@@ -16,6 +16,7 @@
 | 06 | Multi-Jurisdiction Legal Framework | ⚪ Not Started | P1 (High) | 2026-02-07 |
 | 07 | International Construction Law Corpus | ⚪ Not Started | P1 (High) | 2026-02-07 |
 | 08 | Cross-Jurisdiction Comparison Tool | ⚪ Not Started | P2 (Medium) | 2026-02-07 |
+| 09 | Jina v4 Multi-Task Embeddings + Pre-Seeded Corpus + Helm + Release | ⚪ Not Started | P0 (Critical) | 2025-07-23 |
 
 ---
 
@@ -49,6 +50,7 @@
 - [06-Multi-Jurisdiction-Legal-Framework](./06-Multi-Jurisdiction-Legal-Framework/scratchpad.md) — Abstract jurisdiction adapters for international legal corpus
 - [07-International-Construction-Law-Corpus](./07-International-Construction-Law-Corpus/scratchpad.md) — Build preprocessed legal corpora (1 country per continent) for construction law
 - [08-Cross-Jurisdiction-Comparison-Tool](./08-Cross-Jurisdiction-Comparison-Tool/scratchpad.md) — Compare legislation across jurisdictions for compliance analysis
+- [09-Jina-V4-Multi-Task-Embeddings](./09-Jina-V4-Multi-Task-Embeddings/scratchpad.md) — Upgrade to Jina v4 multi-task embeddings, pre-seeded corpus, Helm autoscaling tiers, release v0.1.0
 
 ---
 
@@ -72,6 +74,16 @@
 
 ## Recent Activity
 
+- **2025-07-23:** Goal 09 created — Jina v4 Multi-Task Embeddings + Pre-Seeded Corpus
+  - Upgrade from jina-v2-base-de (161M, 768-dim) to jina-v4 (4B, 2048-dim, 32K context)
+  - **BLOCKER**: Jina v3/v4 both have restrictive licenses (CC BY-NC / Qwen Research) — user needs permissive for business
+  - Alternatives researched: BGE-M3 (MIT), GTE-Qwen2-1.5B (Apache 2.0) — see scratchpad
+  - User mentioned "Vago Solutions" as alternative — HF org 404'd, need correct name
+  - User prefers vLLM for embeddings (v4 has official vLLM support with pre-merged task adapters)
+  - Pre-compute multi-task embeddings for 58K HTML corpus, pre-seed ChromaDB collections
+  - Consolidate Helm chart (delete stale `charts/`, keep `.devops/helm/`), add autoscaling tiers
+  - 13 uncommitted files on `main` must be committed first
+  - Target release: v0.1.0
 - **2026-02-07 01:00:** Goal 05 PR #1 blocked on test coverage
   - All Helm/DevOps work complete (chart, CD pipeline, values files)
   - CI: 169 tests pass, but coverage is 52.81% (required: 73%)
