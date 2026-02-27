@@ -27,6 +27,8 @@ from app.config import get_settings
 from app.ingestion.embeddings import GermanLawEmbeddingStore
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from langchain_core.documents import Document
 
 # Lazy import heavy modules
@@ -44,7 +46,7 @@ class IngestionProgress:
     total_norms: int = 0
     processed_norms: int = 0
     documents_added: int = 0
-    errors: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=lambda: [])
     start_time: float = field(default_factory=time.time)
 
     @property
@@ -136,7 +138,7 @@ def ingest_german_laws(
     max_norms_per_law: int | None = None,
     batch_size: int = 256,
     persist_path: Path | str | None = None,
-    progress_callback: callable | None = None,
+    progress_callback: Callable[[IngestionProgress], Any] | None = None,
     max_workers: int = 16,
 ) -> IngestionResult:
     """Ingest German federal laws into the vector store.
@@ -457,6 +459,11 @@ def search_laws(
     """Search German laws using semantic similarity.
 
     Convenience function for quick searches without managing the store directly.
+
+    When ColBERT re-ranking is enabled (``COLBERT_RERANKING_ENABLED=true``),
+    retrieves more candidates from ChromaDB and re-ranks them using MaxSim
+    late-interaction scoring for improved precision. Falls back gracefully
+    to original ChromaDB ordering if re-ranking fails.
 
     Args:
         query: Search query text

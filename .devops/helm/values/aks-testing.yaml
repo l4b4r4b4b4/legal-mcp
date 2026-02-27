@@ -110,3 +110,17 @@ tolerations: []
 
 # Affinity rules
 affinity: {}
+
+# Seed embeddings — import pre-computed JSONL into ChromaDB on pod start
+seedEmbeddings:
+  enabled: true
+  chromaHost: "chromadb"
+  chromaPort: 8000
+  embeddingsDir: "/app/data/embeddings"
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi

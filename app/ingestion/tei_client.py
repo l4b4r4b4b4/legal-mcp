@@ -70,6 +70,7 @@ class TEIEmbeddingClient:
     _model_info: dict[str, Any] | None = field(default=None, repr=False)
     _url_cycle: itertools.cycle | None = field(default=None, repr=False)
     _cycle_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _server_batch_size: int | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         """Initialize HTTP clients for all endpoints."""
@@ -80,11 +81,114 @@ class TEIEmbeddingClient:
                 limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
             )
         self._url_cycle = itertools.cycle(self.base_urls)
+        # Auto-detect server batch size limit and concurrency capacity
+        self._server_batch_size = self._detect_server_batch_size()
+        self._server_max_concurrent = self._detect_max_concurrent()
         logger.info(
-            "TEI client initialized with %d endpoints: %s",
+            "TEI client initialized with %d endpoints: %s "
+            "(server batch_size=%s, max_concurrent=%s)",
             len(self.base_urls),
             self.base_urls,
+            self._server_batch_size,
+            self._server_max_concurrent,
         )
+
+    # Servers reporting max_client_batch_size >= this threshold are
+    # considered GPU-backed and allowed larger per-request batches.
+    _GPU_BATCH_THRESHOLD: int = 32
+
+    # Conservative per-request cap for CPU / low-capacity TEI servers.
+    _CPU_BATCH_CAP: int = 8
+
+    def _detect_server_batch_size(self) -> int | None:
+        """Detect a safe per-request batch size from the /info endpoint.
+
+        The TEI server reports ``max_client_batch_size`` (max texts per
+        request) and ``max_batch_tokens`` (total token budget per batch).
+        For long legal texts the token budget is usually the binding
+        constraint, so we pick the *minimum* of the reported client batch
+        size and a token-budget-derived heuristic (tokens / 2048 average
+        legal-text length, floored at 2).
+
+        GPU-backed servers (identified by ``max_client_batch_size >= 32``)
+        are allowed much larger batches — up to the server's own limit —
+        because they have the VRAM and throughput to handle them.  CPU or
+        low-capacity servers are capped conservatively at 8 texts/request.
+
+        Returns:
+            A safe per-request batch size, or None if detection fails.
+        """
+        try:
+            info = self.get_model_info()
+            client_limit = info.get("max_client_batch_size")
+            token_budget = info.get("max_batch_tokens")
+            max_concurrent = info.get("max_concurrent_requests")
+
+            # Heuristic: assume ~2048 tokens per average legal paragraph.
+            # This is conservative — many paragraphs are shorter, but some
+            # are 4000+ tokens, and a single oversized batch causes a 429.
+            safe_limit: int | None = None
+            if client_limit is not None and isinstance(client_limit, int):
+                safe_limit = client_limit
+            if token_budget is not None and isinstance(token_budget, int):
+                token_derived = max(2, token_budget // 2048)
+                if safe_limit is not None:
+                    safe_limit = min(safe_limit, token_derived)
+                else:
+                    safe_limit = token_derived
+
+            # For low-concurrency servers (CPU / single-replica), use very
+            # small batches to avoid saturating the request queue.
+            if (
+                max_concurrent is not None
+                and isinstance(max_concurrent, int)
+                and max_concurrent <= 8
+            ):
+                safe_limit = min(safe_limit or 4, 4)
+
+            # Apply tier-appropriate cap based on server capacity.
+            is_gpu_server = (
+                client_limit is not None
+                and isinstance(client_limit, int)
+                and client_limit >= self._GPU_BATCH_THRESHOLD
+            )
+            if safe_limit is not None:
+                if is_gpu_server:
+                    # GPU server — respect its reported limit (typically 64-128).
+                    safe_limit = min(safe_limit, client_limit)  # type: ignore[arg-type]
+                else:
+                    # CPU / low-capacity — conservative cap for legal texts.
+                    safe_limit = min(safe_limit, self._CPU_BATCH_CAP)
+
+            if safe_limit is not None:
+                logger.info(
+                    "Detected TEI safe batch size: %d "
+                    "(client_limit=%s, token_budget=%s, gpu=%s)",
+                    safe_limit,
+                    client_limit,
+                    token_budget,
+                    is_gpu_server,
+                )
+            return safe_limit
+        except Exception as error:
+            logger.debug("Could not detect server batch size: %s", error)
+        return None
+
+    def _detect_max_concurrent(self) -> int | None:
+        """Detect the TEI server's max_concurrent_requests from /info.
+
+        Returns:
+            The server's max_concurrent_requests, or None if unknown.
+        """
+        try:
+            info = self.get_model_info()
+            value = info.get("max_concurrent_requests")
+            if value is not None and isinstance(value, int):
+                logger.info("Detected TEI max_concurrent_requests: %d", value)
+                return value
+        except Exception as error:
+            logger.debug("Could not detect max concurrent: %s", error)
+        return None
 
     def _get_next_url(self) -> str:
         """Get next URL in round-robin fashion (thread-safe)."""
@@ -162,23 +266,56 @@ class TEIEmbeddingClient:
         if not sentences:
             return np.array([])
 
-        # TEI handles batching efficiently - use larger batches
-        batch_size = batch_size or 64
+        # Use server-reported safe batch size if available, otherwise
+        # fall back to a conservative default that works with most TEI configs.
+        if batch_size is None:
+            batch_size = self._server_batch_size or 4
         all_embeddings: list[list[float]] = []
 
-        # Process batches concurrently for better GPU utilization
         import concurrent.futures
 
         batches = [
             sentences[i : i + batch_size] for i in range(0, len(sentences), batch_size)
         ]
 
-        # Use 4 concurrent requests to keep GPU saturated
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-            futures = [executor.submit(self._embed_batch, batch) for batch in batches]
-            for future in concurrent.futures.as_completed(futures):
-                embeddings = future.result()
+        # Decide concurrency based on server capacity.
+        # Low-capacity servers (max_concurrent_requests <= 8, typical for CPU)
+        # are processed sequentially to avoid 429s.  High-capacity servers
+        # (GPU with large request queues) benefit from concurrent batches
+        # that keep the inference pipeline saturated.
+        server_capacity = self._server_max_concurrent or 5
+        if server_capacity <= 8:
+            # CPU TEI / single-replica — sequential to avoid 429s
+            max_workers = 1
+        elif server_capacity >= 512:
+            # GPU server with large queue — moderate concurrency
+            max_workers = min(6, len(batches))
+        else:
+            # Mid-range — light concurrency
+            max_workers = min(3, len(batches))
+
+        if max_workers <= 1:
+            # Sequential processing — no thread pool overhead.
+            # Add a small delay between requests to avoid overwhelming
+            # low-capacity TEI servers (CPU / single-replica).
+            inter_request_delay = 0.1 if server_capacity <= 8 else 0.0
+            for batch_index, batch in enumerate(batches):
+                if batch_index > 0 and inter_request_delay > 0:
+                    time.sleep(inter_request_delay)
+                embeddings = self._embed_batch(batch)
                 all_embeddings.extend(embeddings)
+        else:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=max_workers,
+            ) as executor:
+                # Collect results in order to preserve sentence ↔ embedding
+                # correspondence.
+                futures = [
+                    executor.submit(self._embed_batch, batch) for batch in batches
+                ]
+                for future in futures:
+                    embeddings = future.result()
+                    all_embeddings.extend(embeddings)
 
         return np.array(all_embeddings, dtype=np.float32)
 
@@ -194,7 +331,9 @@ class TEIEmbeddingClient:
         last_error: Exception | None = None
         tried_urls: set[str] = set()
 
-        for attempt in range(self.max_retries * len(self.base_urls)):
+        # Allow more retry cycles for rate-limited servers
+        max_attempts = max(self.max_retries * len(self.base_urls), 6)
+        for attempt in range(max_attempts):
             url = self._get_next_url()
             client = self._get_client(url)
 
@@ -209,18 +348,34 @@ class TEIEmbeddingClient:
             except httpx.HTTPStatusError as e:
                 last_error = e
                 tried_urls.add(url)
-                if e.response.status_code == 503:
-                    # Server overloaded, try next endpoint immediately
-                    logger.debug("TEI server %s overloaded, trying next", url)
+                if e.response.status_code in (429, 503):
+                    # 429 = rate limited, 503 = overloaded — both are transient.
+                    # Try the next endpoint; if all endpoints are saturated,
+                    # back off exponentially before retrying the cycle.
+                    logger.debug(
+                        "TEI server %s returned %d, trying next",
+                        url,
+                        e.response.status_code,
+                    )
                     if len(tried_urls) >= len(self.base_urls):
-                        # All servers tried, wait before retry
-                        wait_time = 2 ** (attempt // len(self.base_urls))
+                        wait_time = min(2 ** (attempt // len(self.base_urls)), 30)
                         logger.warning(
-                            "All TEI servers overloaded, retrying in %ds",
+                            "All TEI servers saturated (%d), retrying in %ds",
+                            e.response.status_code,
                             wait_time,
                         )
                         time.sleep(wait_time)
                         tried_urls.clear()
+                elif e.response.status_code == 422:
+                    # Payload too large or malformed — no point retrying
+                    # the same batch. Log details and re-raise.
+                    logger.error(
+                        "TEI server %s rejected payload (422): %d texts, response=%s",
+                        url,
+                        len(texts),
+                        e.response.text[:500],
+                    )
+                    raise
                 else:
                     raise
 
@@ -239,7 +394,7 @@ class TEIEmbeddingClient:
                     tried_urls.clear()
 
         raise RuntimeError(
-            f"Failed to embed after {self.max_retries * len(self.base_urls)} attempts: {last_error}"
+            f"Failed to embed after {max_attempts} attempts: {last_error}"
         )
 
     def get_sentence_embedding_dimension(self) -> int:
@@ -275,7 +430,7 @@ class TEIEmbeddingClient:
             "model_name": info.get("model_id", "unknown"),
             "device": "tei-server",
             "max_seq_length": info.get("max_input_length", 8192),
-            "batch_size": 64,  # TEI handles batching
+            "batch_size": self._server_batch_size or 4,
             "model_loaded": self.health_check(),
             "last_used": time.time(),
             "idle_timeout": 0,  # No idle timeout for HTTP client

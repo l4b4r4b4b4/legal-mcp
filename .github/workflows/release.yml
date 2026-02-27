@@ -236,7 +236,7 @@ jobs:
       always() &&
       needs.check-ci.outputs.should_build == 'true' &&
       (needs.build-base.result == 'success' || needs.build-base.result == 'skipped')
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -248,6 +248,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Pull LFS files
+        run: git lfs pull
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3

@@ -27,6 +27,28 @@ spec:
       serviceAccountName: {{ include "legal-mcp.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.seedEmbeddings.enabled }}
+      initContainers:
+        - name: seed-embeddings
+          image: {{ include "legal-mcp.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - "python"
+            - "/app/scripts/import_embeddings.py"
+            - "--chroma-host"
+            - {{ .Values.seedEmbeddings.chromaHost | quote }}
+            - "--chroma-port"
+            - {{ .Values.seedEmbeddings.chromaPort | toString | quote }}
+          env:
+            - name: CHROMA_HOST
+              value: {{ .Values.seedEmbeddings.chromaHost | quote }}
+            - name: CHROMA_PORT
+              value: {{ .Values.seedEmbeddings.chromaPort | toString | quote }}
+            - name: EMBEDDINGS_DIR
+              value: {{ .Values.seedEmbeddings.embeddingsDir | quote }}
+          resources:
+            {{- toYaml .Values.seedEmbeddings.resources | nindent 12 }}
+      {{- end }}
       containers:
         - name: {{ .Chart.Name }}
           securityContext:

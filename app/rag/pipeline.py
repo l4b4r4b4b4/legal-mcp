@@ -128,7 +128,7 @@ class RAGPipeline:
 
     @property
     def reranker(self) -> Any:
-        """Lazy-load reranker to avoid startup overhead."""
+        """Lazy-load the TEI HTTP reranker to avoid startup overhead."""
         if self._reranker is None and self.use_reranker:
             from app.rag.reranker import get_reranker
 

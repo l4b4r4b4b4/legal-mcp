@@ -160,3 +160,18 @@ podDisruptionBudget:
   enabled: true
   # Ensure at least 1 pod is always available during maintenance
   minAvailable: 1
+
+# Seed embeddings — import pre-computed JSONL into ChromaDB on pod start
+# Idempotent: skips already-imported laws, so safe for HPA scale-out
+seedEmbeddings:
+  enabled: true
+  chromaHost: "chromadb"
+  chromaPort: 8000
+  embeddingsDir: "/app/data/embeddings"
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi

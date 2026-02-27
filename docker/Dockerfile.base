@@ -80,6 +80,11 @@ COPY --from=builder /opt/venv /opt/venv
 # Set ownership
 RUN chown -R appuser:appuser /app
 
+# Pre-create ChromaDB persistence directory with correct ownership
+# so Docker volume mounts inherit the right permissions
+RUN mkdir -p /app/.local/share/legal-mcp/chroma \
+    && chown -R appuser:appuser /app/.local
+
 # Switch to non-root user
 USER appuser
 
@@ -90,7 +95,7 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
 # Default port for HTTP transport
-EXPOSE 8000
+EXPOSE 9685
 
 # Labels for container metadata
 LABEL org.opencontainers.image.source="https://github.com/l4b4r4b4b4/legal-mcp"

@@ -2,11 +2,11 @@
 # Extends the base image with the template application
 #
 # Build: docker build -f docker/Dockerfile -t legal-mcp:latest .
-# Run:   docker run -p 8000:8000 legal-mcp:latest
+# Run:   docker run -p 9685:9685 legal-mcp:latest
 #
 # The server uses streamable-http transport (recommended for remote/Docker).
 # Configure via environment variables:
-#   FASTMCP_PORT: Server port (default: 8000)
+#   FASTMCP_PORT: Server port (default: 9685)
 #   FASTMCP_HOST: Server host (default: 0.0.0.0)
 #   CACHE_BACKEND: Cache backend - memory, sqlite, redis (default: redis for HTTP)
 #   REDIS_URL: Redis connection URL (default: redis://localhost:6379)
@@ -23,6 +23,19 @@ FROM ${BASE_IMAGE} AS production
 # Copy application code
 COPY --chown=appuser:appuser app/ /app/app/
 
+# Copy pre-downloaded HTML corpus for warm-up ingestion into ChromaDB
+COPY --chown=appuser:appuser data/html/ /app/data/html/
+
+# Copy pre-computed JSONL embeddings (source of truth, ~500 MB)
+# These are imported into ChromaDB at first boot via import_embeddings.py
+COPY --chown=appuser:appuser data/embeddings/ /app/data/embeddings/
+
+# Copy import script for seeding ChromaDB from portable JSONL files
+COPY --chown=appuser:appuser scripts/import_embeddings.py /app/scripts/import_embeddings.py
+
+# Set default warm-up HTML root to the bundled corpus
+ENV WARMUP_HTML_ROOT="/app/data/html"
+
 # Default: Run MCP server with streamable-http transport (recommended for remote)
 CMD ["python", "-m", "app", "streamable-http"]
 
@@ -36,6 +49,18 @@ FROM ${BASE_IMAGE} AS development
 
 # Copy application code
 COPY --chown=appuser:appuser app/ /app/app/
+
+# Copy pre-downloaded HTML corpus for warm-up ingestion
+COPY --chown=appuser:appuser data/html/ /app/data/html/
+
+# Copy pre-computed JSONL embeddings (source of truth, ~500 MB)
+COPY --chown=appuser:appuser data/embeddings/ /app/data/embeddings/
+
+# Copy import script for seeding ChromaDB from portable JSONL files
+COPY --chown=appuser:appuser scripts/import_embeddings.py /app/scripts/import_embeddings.py
+
+# Set default warm-up HTML root to the bundled corpus
+ENV WARMUP_HTML_ROOT="/app/data/html"
 
 # Dev mode - can override with volume mount
 CMD ["python", "-m", "app", "streamable-http"]

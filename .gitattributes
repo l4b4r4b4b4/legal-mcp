@@ -1,0 +1,5 @@
+# Git LFS tracking for pre-computed embedding files
+# These are binary-compressed JSONL files (~500 MB total) that contain
+# the pre-computed vector embeddings for the German federal law corpus.
+# They are the source of truth for seeding ChromaDB in any environment.
+data/embeddings/*.jsonl.gz filter=lfs diff=lfs merge=lfs -text

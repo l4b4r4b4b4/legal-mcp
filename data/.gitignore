@@ -4,8 +4,9 @@ raw/
 # Ignore processed data (can be regenerated)
 processed/
 
-# Ignore embeddings (can be regenerated, very large)
-embeddings/
+# Embedding JSONL files are tracked via Git LFS (see .gitattributes).
+# The manifest is small JSON and tracked in regular git.
+# Only ignore if you want to exclude locally-generated files not yet in LFS.
 
 # Keep directory structure
 !.gitkeep

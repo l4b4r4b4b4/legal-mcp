@@ -15,7 +15,7 @@ Focus areas:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 import numpy as np
@@ -52,6 +52,12 @@ class _FakeHttpxClient:
       - ("timeout", message)
     """
 
+    # Default /info payload — can be overridden per-instance via info_payload
+    _default_info_payload: ClassVar[dict[str, Any]] = {
+        "model_id": "fake-model",
+        "max_input_length": 512,
+    }
+
     def __init__(
         self,
         *,
@@ -60,6 +66,7 @@ class _FakeHttpxClient:
         limits: httpx.Limits,
         get_routes: dict[str, list[int]] | None = None,
         post_routes: dict[str, list[tuple[str, Any]]] | None = None,
+        info_payload: dict[str, Any] | None = None,
     ) -> None:
         self.base_url = base_url
         self.timeout = timeout
@@ -69,6 +76,9 @@ class _FakeHttpxClient:
         self._get_counts: dict[str, int] = {}
         self._post_counts: dict[str, int] = {}
         self.closed = False
+        self._info_payload = (
+            info_payload if info_payload is not None else self._default_info_payload
+        )
 
     def get(self, path: str) -> _FakeResponse:
         count = self._get_counts.get(path, 0)
@@ -76,9 +86,7 @@ class _FakeHttpxClient:
         status_codes = self._get_routes.get(path, [404])
         status_code = status_codes[min(count, len(status_codes) - 1)]
         if path == "/info" and status_code == 200:
-            return _FakeResponse(
-                200, {"model_id": "fake-model", "max_input_length": 512}
-            )
+            return _FakeResponse(200, self._info_payload)
         return _FakeResponse(status_code, {"status": "ok"})
 
     def post(self, path: str, json: dict[str, Any]) -> _FakeResponse:
@@ -132,6 +140,7 @@ def _install_fake_httpx_clients(
             limits=limits,
             get_routes=routes.get("get_routes"),
             post_routes=routes.get("post_routes"),
+            info_payload=routes.get("info_payload"),
         )
         created_clients.append(client)
         return client
@@ -394,3 +403,212 @@ def test_cleanup_closes_all_clients(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert all(fake_client.closed for fake_client in created_clients)
     assert client._clients == {}
+
+
+# ---------------------------------------------------------------------------
+# GPU vs CPU batch-size detection
+# ---------------------------------------------------------------------------
+
+
+class TestBatchSizeDetection:
+    """Tests for _detect_server_batch_size GPU/CPU tier logic."""
+
+    def test_cpu_server_capped_at_8(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """CPU-class server (max_client_batch_size < 32) should be capped at 8."""
+        routes_by_base_url = {
+            "http://tei-1": {
+                "get_routes": {"/info": [200]},
+                "info_payload": {
+                    "model_id": "fake-model",
+                    "max_client_batch_size": 16,
+                    "max_batch_tokens": 32768,
+                    "max_concurrent_requests": 5,
+                },
+            },
+        }
+        _install_fake_httpx_clients(monkeypatch, routes_by_base_url=routes_by_base_url)
+
+        client = tei_client_module.TEIEmbeddingClient(base_urls=["http://tei-1"])
+        detected = client._server_batch_size
+
+        assert detected is not None
+        assert detected <= tei_client_module.TEIEmbeddingClient._CPU_BATCH_CAP
+
+    def test_gpu_server_allows_large_batches(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """GPU-class server (max_client_batch_size >= 32) can use larger batches."""
+        routes_by_base_url = {
+            "http://tei-1": {
+                "get_routes": {"/info": [200]},
+                "info_payload": {
+                    "model_id": "jinaai/jina-embeddings-v2-base-de",
+                    "max_client_batch_size": 128,
+                    "max_batch_tokens": 65536,
+                    "max_concurrent_requests": 1024,
+                },
+            },
+        }
+        _install_fake_httpx_clients(monkeypatch, routes_by_base_url=routes_by_base_url)
+
+        client = tei_client_module.TEIEmbeddingClient(base_urls=["http://tei-1"])
+        detected = client._server_batch_size
+
+        assert detected is not None
+        # GPU server should allow batches larger than the CPU cap of 8
+        assert detected > tei_client_module.TEIEmbeddingClient._CPU_BATCH_CAP
+        # But never exceed the server's own reported limit
+        assert detected <= 128
+
+    def test_gpu_server_token_budget_constrains_batch_size(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Even on GPU, token budget can constrain batch size below max_client_batch_size."""
+        routes_by_base_url = {
+            "http://tei-1": {
+                "get_routes": {"/info": [200]},
+                "info_payload": {
+                    "model_id": "jinaai/jina-embeddings-v2-base-de",
+                    "max_client_batch_size": 128,
+                    # Small token budget: 16384 / 2048 = 8
+                    "max_batch_tokens": 16384,
+                    "max_concurrent_requests": 1024,
+                },
+            },
+        }
+        _install_fake_httpx_clients(monkeypatch, routes_by_base_url=routes_by_base_url)
+
+        client = tei_client_module.TEIEmbeddingClient(base_urls=["http://tei-1"])
+        detected = client._server_batch_size
+
+        assert detected is not None
+        # token_derived = 16384 // 2048 = 8; min(8, 128) = 8
+        assert detected == 8
+
+    def test_low_concurrency_server_uses_small_batches(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Servers with max_concurrent_requests <= 8 get capped at 4."""
+        routes_by_base_url = {
+            "http://tei-1": {
+                "get_routes": {"/info": [200]},
+                "info_payload": {
+                    "model_id": "fake-model",
+                    "max_client_batch_size": 64,
+                    "max_batch_tokens": 65536,
+                    "max_concurrent_requests": 4,
+                },
+            },
+        }
+        _install_fake_httpx_clients(monkeypatch, routes_by_base_url=routes_by_base_url)
+
+        client = tei_client_module.TEIEmbeddingClient(base_urls=["http://tei-1"])
+        detected = client._server_batch_size
+
+        assert detected is not None
+        assert detected <= 4
+
+    def test_info_endpoint_failure_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If /info is unreachable, batch size detection returns None gracefully."""
+        routes_by_base_url = {
+            "http://tei-1": {
+                "get_routes": {"/info": [500]},
+            },
+        }
+        _install_fake_httpx_clients(monkeypatch, routes_by_base_url=routes_by_base_url)
+
+        client = tei_client_module.TEIEmbeddingClient(base_urls=["http://tei-1"])
+        detected = client._server_batch_size
+
+        assert detected is None
+
+    def test_gpu_threshold_boundary(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Exactly at threshold (32) should be classified as GPU."""
+        routes_by_base_url = {
+            "http://tei-1": {
+                "get_routes": {"/info": [200]},
+                "info_payload": {
+                    "model_id": "fake-model",
+                    "max_client_batch_size": 32,
+                    "max_batch_tokens": 131072,
+                    "max_concurrent_requests": 512,
+                },
+            },
+        }
+        _install_fake_httpx_clients(monkeypatch, routes_by_base_url=routes_by_base_url)
+
+        client = tei_client_module.TEIEmbeddingClient(base_urls=["http://tei-1"])
+        detected = client._server_batch_size
+
+        assert detected is not None
+        # At the boundary, the server is GPU-class → allowed up to client_limit
+        assert detected <= 32
+        # token_derived = 131072 // 2048 = 64, min(32, 64) = 32, GPU → min(32, 32) = 32
+        assert detected == 32
+
+
+class TestConcurrencyScaling:
+    """Tests for encode() worker count scaling based on server capacity."""
+
+    def test_low_capacity_runs_sequentially(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CPU TEI (max_concurrent <= 8) should process batches sequentially."""
+        routes_by_base_url = {
+            "http://tei-1": {
+                "get_routes": {"/info": [200]},
+                "info_payload": {
+                    "model_id": "fake-model",
+                    "max_concurrent_requests": 4,
+                },
+                "post_routes": {
+                    "/embed": [("ok", [[1.0]]), ("ok", [[2.0]]), ("ok", [[3.0]])]
+                },
+            },
+        }
+        _install_fake_httpx_clients(monkeypatch, routes_by_base_url=routes_by_base_url)
+        _install_sleep_spy(monkeypatch)
+
+        client = tei_client_module.TEIEmbeddingClient(base_urls=["http://tei-1"])
+
+        # 3 sentences with batch_size=1 → 3 sequential batches
+        result = client.encode(["a", "b", "c"], batch_size=1)
+        assert result.shape == (3, 1)
+
+    def test_high_capacity_uses_concurrent_workers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """GPU TEI (max_concurrent >= 512) should use more concurrent workers."""
+        routes_by_base_url = {
+            "http://tei-1": {
+                "get_routes": {"/info": [200]},
+                "info_payload": {
+                    "model_id": "fake-model",
+                    "max_concurrent_requests": 1024,
+                    "max_client_batch_size": 128,
+                    "max_batch_tokens": 65536,
+                },
+                "post_routes": {
+                    "/embed": [
+                        ("ok", [[1.0]]),
+                        ("ok", [[2.0]]),
+                        ("ok", [[3.0]]),
+                        ("ok", [[4.0]]),
+                        ("ok", [[5.0]]),
+                        ("ok", [[6.0]]),
+                    ]
+                },
+            },
+        }
+        _install_fake_httpx_clients(monkeypatch, routes_by_base_url=routes_by_base_url)
+
+        client = tei_client_module.TEIEmbeddingClient(base_urls=["http://tei-1"])
+
+        # Verify detection classified this as high-capacity
+        assert client._server_max_concurrent == 1024
+
+        # 6 sentences with batch_size=1 → 6 batches, should use concurrent execution
+        result = client.encode(["a", "b", "c", "d", "e", "f"], batch_size=1)
+        assert result.shape == (6, 1)

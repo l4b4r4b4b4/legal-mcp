@@ -21,12 +21,14 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 
 if TYPE_CHECKING:
+    from chromadb.api import ClientAPI
+    from chromadb.api.types import Metadata, WhereDocument
     from langchain_core.documents import Document
 
 from app.config import get_settings
@@ -92,39 +94,64 @@ class GermanLawEmbeddingStore:
     model_name: str = DEFAULT_MODEL_NAME
     persist_path: Path = field(default_factory=lambda: DEFAULT_PERSIST_PATH)
     collection_name: str = COLLECTION_NAME
-    _client: chromadb.PersistentClient | None = field(default=None, repr=False)
+    chroma_host: str | None = field(default=None)
+    chroma_port: int = field(default=8000)
+    _client: ClientAPI | None = field(default=None, repr=False)
     _collection: chromadb.Collection | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
-        """Ensure persist path exists."""
-        self.persist_path = Path(self.persist_path)
-        self.persist_path.mkdir(parents=True, exist_ok=True)
+        """Resolve ChromaDB connection mode and ensure paths exist.
+
+        If ``chroma_host`` is not provided explicitly, falls back to the
+        ``chroma_host`` setting from the application config.  When a host
+        is configured the store connects via ``HttpClient``; otherwise it
+        uses a local ``PersistentClient`` at ``persist_path``.
+        """
+        # Auto-detect chroma_host/port from config if not provided explicitly
+        if self.chroma_host is None:
+            settings = get_settings()
+            self.chroma_host = settings.chroma_host
+            self.chroma_port = settings.chroma_port
+
+        # Only create local directories when using PersistentClient
+        if self.chroma_host is None:
+            self.persist_path = Path(self.persist_path)
+            self.persist_path.mkdir(parents=True, exist_ok=True)
 
     @property
     def model(self) -> Any:
-        """Get the embedding model (TEI client or local model manager)."""
+        """Get the TEI embedding client."""
         settings = get_settings()
-        if settings.use_tei:
-            from app.ingestion.tei_client import get_tei_client
+        from app.ingestion.tei_client import get_tei_client
 
-            return get_tei_client(settings.tei_url)
-        else:
-            from app.ingestion.model_manager import get_embedding_model
-
-            return get_embedding_model(self.model_name)
+        return get_tei_client(settings.tei_url)
 
     @property
-    def client(self) -> chromadb.PersistentClient:
-        """Lazy-load the ChromaDB client."""
+    def client(self) -> ClientAPI:
+        """Lazy-load the ChromaDB client (HTTP or persistent)."""
         if self._client is None:
-            logger.info("Initializing ChromaDB at: %s", self.persist_path)
-            self._client = chromadb.PersistentClient(
-                path=str(self.persist_path),
-                settings=ChromaSettings(
-                    anonymized_telemetry=False,
-                    allow_reset=True,
-                ),
-            )
+            if self.chroma_host is not None:
+                logger.info(
+                    "Connecting to ChromaDB server at: %s:%d",
+                    self.chroma_host,
+                    self.chroma_port,
+                )
+                self._client = chromadb.HttpClient(
+                    host=self.chroma_host,
+                    port=self.chroma_port,
+                    settings=ChromaSettings(
+                        anonymized_telemetry=False,
+                    ),
+                )
+            else:
+                logger.info("Initializing local ChromaDB at: %s", self.persist_path)
+                self._client = chromadb.PersistentClient(
+                    path=str(self.persist_path),
+                    settings=ChromaSettings(
+                        anonymized_telemetry=False,
+                        allow_reset=True,
+                    ),
+                )
         return self._client
 
     @property
@@ -146,13 +173,13 @@ class GermanLawEmbeddingStore:
             )
         return self._collection
 
-    def _prepare_metadata(self, metadata: dict[str, Any]) -> dict[str, Any]:
+    def _prepare_metadata(self, metadata: dict[str, Any]) -> Metadata:
         """Prepare metadata for ChromaDB storage.
 
         ChromaDB only supports str, int, float, bool as metadata values.
         Convert any other types to strings.
         """
-        clean_metadata: dict[str, Any] = {}
+        clean_metadata: dict[str, str | int | float | bool | None] = {}
         for key, value in metadata.items():
             if value is None:
                 continue  # Skip None values
@@ -163,7 +190,7 @@ class GermanLawEmbeddingStore:
                 clean_metadata[key] = ",".join(str(v) for v in value)
             else:
                 clean_metadata[key] = str(value)
-        return clean_metadata
+        return cast("Metadata", clean_metadata)
 
     def add_documents(
         self,
@@ -209,14 +236,17 @@ class GermanLawEmbeddingStore:
             seen_ids: set[str] = set()
             ids: list[str] = []
             contents: list[str] = []
-            metadatas: list[dict[str, Any]] = []
+            metadatas: list[Metadata] = []
 
             for doc in batch:
                 if not doc.page_content:
                     continue
 
+                # Cast bare dict from langchain Document to typed dict
+                doc_meta = cast("dict[str, Any]", doc.metadata)
+
                 # Use doc_id from metadata or generate one
-                doc_id = doc.metadata.get("doc_id", f"doc_{hash(doc.page_content)}")
+                doc_id = doc_meta.get("doc_id", f"doc_{hash(doc.page_content)}")
 
                 # Skip duplicates within batch
                 if doc_id in seen_ids:
@@ -225,7 +255,7 @@ class GermanLawEmbeddingStore:
 
                 ids.append(doc_id)
                 contents.append(doc.page_content)
-                metadatas.append(self._prepare_metadata(doc.metadata))
+                metadatas.append(self._prepare_metadata(doc_meta))
 
             if not contents:
                 continue
@@ -257,7 +287,7 @@ class GermanLawEmbeddingStore:
         query: str,
         n_results: int = 10,
         where: dict[str, Any] | None = None,
-        where_document: dict[str, Any] | None = None,
+        where_document: WhereDocument | None = None,
     ) -> list[SearchResult]:
         """Search for similar documents using semantic similarity.
 
@@ -298,7 +328,9 @@ class GermanLawEmbeddingStore:
 
         ids = results["ids"][0]
         documents = results["documents"][0] if results["documents"] else [""] * len(ids)
-        metadatas = results["metadatas"][0] if results["metadatas"] else [{}] * len(ids)
+        raw_metadatas = (
+            results["metadatas"][0] if results["metadatas"] else [{}] * len(ids)
+        )
         distances = (
             results["distances"][0] if results["distances"] else [0.0] * len(ids)
         )
@@ -308,7 +340,7 @@ class GermanLawEmbeddingStore:
                 SearchResult(
                     doc_id=doc_id,
                     content=documents[i] if documents else "",
-                    metadata=metadatas[i] if metadatas else {},
+                    metadata=dict(raw_metadatas[i]) if raw_metadatas else {},
                     distance=distances[i] if distances else 0.0,
                 )
             )
@@ -332,10 +364,11 @@ class GermanLawEmbeddingStore:
         if not result["ids"]:
             return None
 
+        raw_metadata = result["metadatas"][0] if result["metadatas"] else {}
         return SearchResult(
             doc_id=result["ids"][0],
             content=result["documents"][0] if result["documents"] else "",
-            metadata=result["metadatas"][0] if result["metadatas"] else {},
+            metadata=dict(raw_metadata) if raw_metadata else {},
             distance=0.0,  # Exact match
         )
 
@@ -374,12 +407,14 @@ class GermanLawEmbeddingStore:
         if not result["ids"]:
             return search_results
 
+        raw_metadatas = result["metadatas"] or []
         for i, doc_id in enumerate(result["ids"]):
+            raw_meta = raw_metadatas[i] if i < len(raw_metadatas) else {}
             search_results.append(
                 SearchResult(
                     doc_id=doc_id,
                     content=result["documents"][i] if result["documents"] else "",
-                    metadata=result["metadatas"][i] if result["metadatas"] else {},
+                    metadata=dict(raw_meta) if raw_meta else {},
                     distance=0.0,
                 )
             )
@@ -429,10 +464,18 @@ class GermanLawEmbeddingStore:
                 include=["metadatas"],
             )
             if sample["metadatas"]:
-                # Count unique laws
-                laws = {m.get("law_abbrev") for m in sample["metadatas"] if m}
-                levels = {m.get("level") for m in sample["metadatas"] if m}
-                stats["sampled_unique_laws"] = len(laws - {None})
-                stats["levels"] = list(levels - {None})
+                # Count unique laws — cast metadata values to str for set ops
+                laws = {
+                    str(m.get("law_abbrev"))
+                    for m in sample["metadatas"]
+                    if m and m.get("law_abbrev") is not None
+                }
+                levels = {
+                    str(m.get("level"))
+                    for m in sample["metadatas"]
+                    if m and m.get("level") is not None
+                }
+                stats["sampled_unique_laws"] = len(laws)
+                stats["levels"] = sorted(levels)
 
         return stats

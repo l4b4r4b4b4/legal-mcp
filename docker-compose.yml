@@ -1,16 +1,95 @@
 # Docker Compose for Legal-MCP
 #
 # Usage:
-#   docker compose up                    # Run production server
+#   docker compose up                    # Run production server + ChromaDB
 #   docker compose --profile dev up      # Run development server with hot reload
 #   docker compose build                 # Build all images
 #
+# ChromaDB modes:
+#   HttpClient (recommended for Docker):
+#     The included chromadb service runs automatically.
+#     legal-mcp connects to it via CHROMA_HOST=chromadb on the internal network.
+#     For local dev outside Docker, connect to localhost:9720.
+#   PersistentClient (local dev without server):
+#     Leave CHROMA_HOST unset — falls back to local file-based ChromaDB.
+#     Requires the full `chromadb` package (not `chromadb-client`).
+#
+# Embedding seeding:
+#   Pre-computed JSONL embeddings are baked into the Docker image (~500 MB).
+#   The `seed-embeddings` service imports them into ChromaDB on first boot.
+#   It's idempotent — already-imported laws are skipped on subsequent starts.
+#   This replaces the older WARMUP_ON_STARTUP mechanism (which required TEI/GPU).
+#
 # Environment variables (optional):
 #   PYTHON_VERSION: Python version for images (default: 3.12)
+#   CHROMA_HOST: ChromaDB server hostname (default: chromadb for Docker services)
+#   CHROMA_PORT: ChromaDB server port (default: 8000)
 #   LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST
+#   WARMUP_ON_STARTUP: Enable corpus warm-up on start (default: false)
+#   WARMUP_MAX_LAWS: Max laws to ingest (default: all)
+#   USE_TEI: Use TEI server for embeddings (default: false)
+#   TEI_URL: TEI server URL (default: http://tei-embeddings:8080)
 
 services:
+  # ---------------------------------------------------------------------------
+  # ChromaDB vector store
+  # ---------------------------------------------------------------------------
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: legal-mcp-chromadb
+    ports:
+      - "${CHROMA_EXTERNAL_PORT:-9720}:8000"
+    volumes:
+      - chroma_data:/data
+    environment:
+      - CHROMA_SERVER_HOST=0.0.0.0
+      - CHROMA_SERVER_HTTP_PORT=8000
+      - ANONYMIZED_TELEMETRY=false
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "echo -e 'GET /api/v2/heartbeat HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' | timeout 2 bash -c 'cat > /dev/tcp/localhost/8000' && exit 0 || exit 1",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+  # ---------------------------------------------------------------------------
+  # Seed ChromaDB with pre-computed embeddings (runs once, then exits)
+  #
+  # Imports portable JSONL embeddings from /app/data/embeddings/ into ChromaDB.
+  # Idempotent: skips laws already imported (resume support).
+  # On a fresh ChromaDB volume, seeding ~193K docs takes ~2-5 minutes.
+  # On subsequent starts, it detects all laws present and exits in seconds.
+  # ---------------------------------------------------------------------------
+  seed-embeddings:
+    image: ghcr.io/l4b4r4b4b4/legal-mcp:latest
+    depends_on:
+      chromadb:
+        condition: service_healthy
+    environment:
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - EMBEDDINGS_DIR=/app/data/embeddings
+    command:
+      - python
+      - /app/scripts/import_embeddings.py
+      - --chroma-host
+      - chromadb
+      - --chroma-port
+      - "8000"
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
   # Production server
+  # ---------------------------------------------------------------------------
   legal-mcp:
     build:
       context: .
@@ -20,14 +99,45 @@ services:
         - PYTHON_VERSION=${PYTHON_VERSION:-3.12}
     image: ghcr.io/l4b4r4b4b4/legal-mcp:latest
     ports:
-      - "8000:8000"
+      - "${FASTMCP_PORT:-9685}:9685"
+    depends_on:
+      chromadb:
+        condition: service_healthy
+    networks:
+      - default
+      - tei_network
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:9685/health')",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     environment:
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
       - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
+      # ChromaDB connection — HttpClient to the co-located chromadb service.
+      # Override CHROMA_HOST to point at an external server if needed.
+      - CHROMA_HOST=${CHROMA_HOST:-chromadb}
+      - CHROMA_PORT=${CHROMA_PORT:-8000}
+      # Corpus warm-up disabled — corpus is pre-seeded by seed-embeddings service.
+      # Set WARMUP_ON_STARTUP=true only if you need to re-embed from HTML + TEI (GPU).
+      - WARMUP_ON_STARTUP=${WARMUP_ON_STARTUP:-false}
+      # TEI embedding server (external, e.g. from docproc-platform stack)
+      - USE_TEI=${USE_TEI:-true}
+      - TEI_URL=${TEI_URL:-http://tei-embeddings:8080}
+      - FASTMCP_PORT=9685
     restart: unless-stopped
 
+  # ---------------------------------------------------------------------------
   # Development server with hot reload
+  # ---------------------------------------------------------------------------
   dev:
     build:
       context: .
@@ -35,17 +145,32 @@ services:
       args:
         - PYTHON_VERSION=${PYTHON_VERSION:-3.12}
     ports:
-      - "8000:8000"
+      - "${FASTMCP_PORT:-9685}:9685"
     volumes:
       - ./app:/app/app:ro
+    depends_on:
+      chromadb:
+        condition: service_healthy
+    networks:
+      - default
+      - tei_network
     environment:
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
       - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
+      - CHROMA_HOST=${CHROMA_HOST:-chromadb}
+      - CHROMA_PORT=${CHROMA_PORT:-8000}
+      # Corpus warm-up disabled — corpus is pre-seeded by seed-embeddings service.
+      - WARMUP_ON_STARTUP=false
+      - USE_TEI=${USE_TEI:-true}
+      - TEI_URL=${TEI_URL:-http://tei-embeddings:8080}
+      - FASTMCP_PORT=9685
     profiles:
       - dev
 
+  # ---------------------------------------------------------------------------
   # Build the base image (for publishing)
+  # ---------------------------------------------------------------------------
   base:
     build:
       context: .
@@ -55,3 +180,18 @@ services:
     image: ghcr.io/l4b4r4b4b4/legal-mcp-base:latest
     profiles:
       - build
+
+volumes:
+  chroma_data:
+    driver: local
+
+networks:
+  # Network for TEI embedding server connectivity.
+  # Uses the same network name as docproc-platform so that if both stacks
+  # are running, legal-mcp can reach tei-embeddings directly.
+  # When docproc-platform isn't running, compose creates the network
+  # When docproc-platform is running, set external: true.
+  # When it's not running, set external: false to auto-create.
+  tei_network:
+    name: docproc-platform_default
+    external: true

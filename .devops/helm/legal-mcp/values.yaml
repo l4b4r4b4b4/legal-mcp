@@ -179,6 +179,34 @@ persistence:
   # -- Annotations for PVC
   annotations: {}
 
+# Seed embeddings configuration
+# Runs an init container that imports pre-computed JSONL embeddings into ChromaDB
+# before the main server starts. Idempotent — skips already-imported laws.
+#
+# Note on persistence interaction:
+#   When persistence.enabled=true, the PVC mounts at /app/data on the main container,
+#   which shadows the baked-in files. The init container does NOT mount the PVC, so it
+#   reads the baked-in JSONL embeddings from the image filesystem and writes them to
+#   ChromaDB over the network. This is intentional — the main container doesn't need
+#   local embeddings because it queries ChromaDB directly.
+seedEmbeddings:
+  # -- Enable the seed-embeddings init container
+  enabled: true
+  # -- ChromaDB hostname (must be reachable from the pod)
+  chromaHost: "chromadb"
+  # -- ChromaDB port
+  chromaPort: 8000
+  # -- Path to embeddings directory inside the container
+  embeddingsDir: "/app/data/embeddings"
+  # -- Resource limits for the init container
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+
 # Probes configuration
 # By default, probes use TCP socket checks since FastMCP doesn't have a /health endpoint.
 # To use HTTP probes, set httpGet.path and httpGet.port under each probe.

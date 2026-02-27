@@ -3,7 +3,7 @@
 This module handles the ingestion pipeline for legal documents:
 - Discovery: Find all laws and norms from official sources
 - Loading: Parse HTML pages into LangChain Documents
-- Embedding: Convert text to vectors using sentence-transformers
+- Embedding: Convert text to vectors using TEI
 - Storage: Persist in ChromaDB for semantic search
 
 Components:
@@ -23,11 +23,8 @@ __all__ = [
     "GermanLawEmbeddingStore",
     "IngestionProgress",
     "IngestionResult",
-    "cleanup_embedding_model",
-    "get_embedding_model",
     "ingest_german_laws",
     "ingest_single_law",
-    "reset_embedding_model",
     "search_laws",
 ]
 
@@ -64,20 +61,4 @@ def __getattr__(name: str) -> object:
         from app.ingestion.pipeline import search_laws
 
         return search_laws
-
-    if name == "get_embedding_model":
-        from app.ingestion.model_manager import get_embedding_model
-
-        return get_embedding_model
-
-    if name == "cleanup_embedding_model":
-        from app.ingestion.model_manager import cleanup_embedding_model
-
-        return cleanup_embedding_model
-
-    if name == "reset_embedding_model":
-        from app.ingestion.model_manager import reset_embedding_model
-
-        return reset_embedding_model
-
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
