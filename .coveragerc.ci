@@ -1,0 +1,31 @@
+# CI-specific coverage configuration.
+#
+# Used when running tests WITHOUT the ml dependency group (torch,
+# sentence-transformers).  Omits source modules that can only be
+# exercised when those packages are installed and lowers fail_under
+# accordingly.
+#
+# Local threshold (pyproject.toml): 73%  (full test suite with torch)
+# CI threshold (this file):         68%  (torch-dependent tests skipped,
+#                                         ~70% expected, 2% margin)
+#
+# Usage:  uv run pytest --cov --cov-config=.coveragerc.ci ...
+
+[run]
+source = app
+branch = true
+omit =
+    app/__main__.py
+    app/ingestion/model_manager.py
+    app/reranking/colbert_reranker.py
+
+[report]
+fail_under = 68
+show_missing = true
+exclude_lines =
+    pragma: no cover
+    if TYPE_CHECKING:
+    raise NotImplementedError
+
+[html]
+skip_empty = true
