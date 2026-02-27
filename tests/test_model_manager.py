@@ -14,12 +14,15 @@ inside `app.ingestion.model_manager` to keep tests deterministic and fast.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import numpy as np
+import pytest
 
-if TYPE_CHECKING:
-    import pytest
+pytest.importorskip("torch", reason="torch not installed (ml group)")
+pytest.importorskip(
+    "sentence_transformers", reason="sentence-transformers not installed (ml group)"
+)
 
 
 @dataclass(frozen=True)

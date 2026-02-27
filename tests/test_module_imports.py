@@ -53,16 +53,19 @@ class TestIngestionLazyImports:
         assert callable(search_laws)
 
     def test_import_get_embedding_model(self):
+        pytest.importorskip("torch", reason="torch not installed (ml group)")
         from app.ingestion import get_embedding_model
 
         assert callable(get_embedding_model)
 
     def test_import_cleanup_embedding_model(self):
+        pytest.importorskip("torch", reason="torch not installed (ml group)")
         from app.ingestion import cleanup_embedding_model
 
         assert callable(cleanup_embedding_model)
 
     def test_import_reset_embedding_model(self):
+        pytest.importorskip("torch", reason="torch not installed (ml group)")
         from app.ingestion import reset_embedding_model
 
         assert callable(reset_embedding_model)
@@ -76,6 +79,7 @@ class TestIngestionLazyImports:
 
     def test_all_exports_match_getattr(self):
         """Every name in __all__ is importable."""
+        pytest.importorskip("torch", reason="torch not installed (ml group)")
         import app.ingestion
 
         for name in app.ingestion.__all__:
@@ -91,21 +95,25 @@ class TestRerankingLazyImports:
     """Test lazy imports in app.reranking.__init__."""
 
     def test_import_colbert_reranker_class(self):
+        pytest.importorskip("torch", reason="torch not installed (ml group)")
         from app.reranking import ColBERTReranker
 
         assert ColBERTReranker is not None
 
     def test_import_get_colbert_reranker(self):
+        pytest.importorskip("torch", reason="torch not installed (ml group)")
         from app.reranking import get_colbert_reranker
 
         assert callable(get_colbert_reranker)
 
     def test_import_cleanup_colbert_reranker(self):
+        pytest.importorskip("torch", reason="torch not installed (ml group)")
         from app.reranking import cleanup_colbert_reranker
 
         assert callable(cleanup_colbert_reranker)
 
     def test_import_reset_colbert_reranker(self):
+        pytest.importorskip("torch", reason="torch not installed (ml group)")
         from app.reranking import reset_colbert_reranker
 
         assert callable(reset_colbert_reranker)

@@ -26,9 +26,10 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-import torch
 
 from app.rag.reranker import RerankResult
+
+torch = pytest.importorskip("torch", reason="torch not installed (ml group)")
 
 # =============================================================================
 # Fake / Helper classes
