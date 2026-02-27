@@ -120,16 +120,11 @@ class GermanLawEmbeddingStore:
 
     @property
     def model(self) -> Any:
-        """Get the embedding model (TEI client or local model manager)."""
+        """Get the TEI embedding client."""
         settings = get_settings()
-        if settings.use_tei:
-            from app.ingestion.tei_client import get_tei_client
+        from app.ingestion.tei_client import get_tei_client
 
-            return get_tei_client(settings.tei_url)
-        else:
-            from app.ingestion.model_manager import get_embedding_model
-
-            return get_embedding_model(self.model_name)
+        return get_tei_client(settings.tei_url)
 
     @property
     def client(self) -> ClientAPI:

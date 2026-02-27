@@ -57,7 +57,7 @@ jobs:
           git config --global url."https://${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --all-groups
 
       - name: Run Ruff linter
         run: uv run ruff check . --output-format=github
@@ -93,11 +93,11 @@ jobs:
           git config --global url."https://${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --all-groups
 
       - name: Run tests with coverage
         run: |
-          uv run pytest --cov --cov-config=.coveragerc.ci --cov-report=xml --cov-report=term-missing
+          uv run pytest --cov --cov-report=xml --cov-report=term-missing
 
       - name: Upload coverage reports
         if: matrix.python-version == '3.12'
@@ -131,7 +131,7 @@ jobs:
           git config --global url."https://${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --all-groups
 
       - name: Run pip-audit
         run: |

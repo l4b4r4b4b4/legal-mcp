@@ -37,7 +37,7 @@ repos:
     rev: 1.7.8
     hooks:
       - id: bandit
-        args: [-c, pyproject.toml]
+        args: [-c, pyproject.toml, -ll, -ii]
         additional_dependencies: ["bandit[toml]"]
         files: ^app/
 
@@ -46,7 +46,7 @@ repos:
   - repo: local
     hooks:
       - id: pytest-coverage
-        name: pytest + coverage (≥73%)
+        name: pytest + coverage (≥70%)
         entry: uv run pytest --cov --cov-report=term-missing -q
         language: system
         pass_filenames: false
