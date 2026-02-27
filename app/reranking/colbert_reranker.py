@@ -59,6 +59,11 @@ _PROJECTION_DIM = 128
 _QUERY_MAX_LENGTH = 256
 _DOCUMENT_MAX_LENGTH = 2048
 
+# Pinned model revision (commit SHA) for reproducible downloads.
+# VAGOsolutions/SauerkrautLM-Reason-EuroColBERT last modified 2025-08-03.
+# Update this when upgrading the model version.
+_MODEL_REVISION = "2d257d369ff319858cc758e8bae0794ee827581d"
+
 # Prefixes (from model's config_sentence_transformers.json)
 _QUERY_PREFIX = "[Q] "
 _DOCUMENT_PREFIX = "[D] "
@@ -208,6 +213,7 @@ class ColBERTReranker:
             self._tokenizer = AutoTokenizer.from_pretrained(
                 self.model_name,
                 trust_remote_code=True,
+                revision=_MODEL_REVISION,
             )
 
             # Load backbone
@@ -216,6 +222,7 @@ class ColBERTReranker:
             self._backbone = AutoModel.from_pretrained(
                 self.model_name,
                 trust_remote_code=True,
+                revision=_MODEL_REVISION,
             )
             self._backbone.to(self._resolved_device)
             self._backbone.eval()
@@ -274,6 +281,7 @@ class ColBERTReranker:
             dense_path = hf_hub_download(
                 repo_id=self.model_name,
                 filename="1_Dense/model.safetensors",
+                revision=_MODEL_REVISION,
             )
             state_dict = load_file(dense_path)
 
