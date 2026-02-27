@@ -12,7 +12,7 @@ are NOT tested here — they are covered by local E2E tests.
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -23,6 +23,9 @@ from app.ingestion.local_pipeline import (
     discover_local_laws,
     parse_local_html_file,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # HTML Fixtures (gesetze-im-internet.de format)
@@ -434,7 +437,7 @@ class TestParseLawDirectory:
         bad_file.write_bytes(b"\x80\x81\x82\x83")
 
         html_files = sorted(law_directory.glob("*.html"))
-        law_abbreviation, documents, errors = _parse_law_directory("bgb", html_files)
+        law_abbreviation, documents, _errors = _parse_law_directory("bgb", html_files)
 
         assert law_abbreviation == "bgb"
         # At least the valid file produced documents
@@ -460,3 +463,46 @@ class TestParseLawDirectory:
 
         assert documents == []
         assert errors == []
+
+    def test_multi_paragraph_with_empty_paragraph_skips_blank(self, tmp_path):
+        """Empty paragraphs in multi-paragraph norms are skipped."""
+        html_with_empty_paragraph = """
+        <html><body>
+        <h1>Test Law</h1>
+        <span class="jnenbez">§ 1</span>
+        <span class="jnentitel">Test Norm</span>
+        <div class="jurAbsatz">First paragraph content.</div>
+        <div class="jurAbsatz">   </div>
+        <div class="jurAbsatz">Third paragraph content.</div>
+        </body></html>
+        """
+        html_file = _write_html(tmp_path, "para_1.html", html_with_empty_paragraph)
+
+        documents = parse_local_html_file(html_file, "test")
+
+        # Full norm + 2 non-empty paragraphs (blank one skipped)
+        paragraph_documents = [
+            document
+            for document in documents
+            if document.metadata["level"] == "paragraph"
+        ]
+        assert len(paragraph_documents) == 2
+        assert all(document.page_content.strip() for document in paragraph_documents)
+
+    def test_xml_epub_pdf_files_skipped(self, tmp_path):
+        """Files containing xml, epub, pdf substrings are filtered."""
+        _create_law_directory(
+            tmp_path,
+            "bgb",
+            {
+                "para_433.html": SAMPLE_NORM_HTML,
+                "bgb_xml_export.html": "<html></html>",
+                "bgb_epub_version.html": "<html></html>",
+                "bgb_pdf_link.html": "<html></html>",
+            },
+        )
+
+        result = discover_local_laws(tmp_path)
+
+        filenames = [f.name for f in result[0][1]]
+        assert filenames == ["para_433.html"]

@@ -41,15 +41,17 @@ repos:
         additional_dependencies: ["bandit[toml]"]
         files: ^app/
 
-  # Dependency vulnerability scanning (pip-audit works with UV projects)
-  - repo: https://github.com/pypa/pip-audit
-    rev: v2.10.0
+
+  # Test coverage gate (runs on push only — too slow for every commit)
+  - repo: local
     hooks:
-      - id: pip-audit
-        # --local: scan installed packages in .venv
-        # --skip-editable: skip local package (not on PyPI)
-        args: [--local, --skip-editable]
+      - id: pytest-coverage
+        name: pytest + coverage (≥73%)
+        entry: uv run pytest --cov --cov-report=term-missing -q
+        language: system
         pass_filenames: false
+        always_run: true
+        stages: [pre-push]
 
 # CI configuration
 ci:

@@ -23,7 +23,6 @@ from app.warmup import (
     is_warmup_running,
 )
 
-
 # ===========================================================================
 # WarmupState enum
 # ===========================================================================
@@ -288,3 +287,127 @@ class TestThreadSafety:
         result = status.to_dict()
         assert result["state"] == "running"
         assert result["total_laws"] == 100
+
+
+# ===========================================================================
+# start_background_warmup / run_warmup_sync (mocked worker)
+# ===========================================================================
+
+
+class TestBackgroundWarmup:
+    """Tests for start_background_warmup with mocked _warmup_worker."""
+
+    def test_start_background_warmup_returns_true(self):
+        """Starting warmup when idle returns True."""
+        import app.warmup as warmup_module
+
+        original_worker = warmup_module._warmup_worker
+
+        def noop_worker(*args, **kwargs):
+            pass
+
+        warmup_module._warmup_worker = noop_worker
+        warmup_module._warmup_thread = None
+
+        try:
+            result = warmup_module.start_background_warmup(
+                html_root="/tmp/fake",
+                max_laws=1,
+            )
+            assert result is True
+            # Wait for thread to finish
+            if warmup_module._warmup_thread is not None:
+                warmup_module._warmup_thread.join(timeout=2)
+        finally:
+            warmup_module._warmup_worker = original_worker
+            warmup_module._warmup_thread = None
+
+    def test_start_background_warmup_already_running_returns_false(self):
+        """Starting warmup when already running returns False."""
+        import app.warmup as warmup_module
+
+        stop_event = __import__("threading").Event()
+
+        def blocking_worker(*args, **kwargs):
+            stop_event.wait(timeout=5)
+
+        original_worker = warmup_module._warmup_worker
+        warmup_module._warmup_worker = blocking_worker
+        warmup_module._warmup_thread = None
+
+        try:
+            # Start first
+            warmup_module.start_background_warmup(html_root="/tmp/fake")
+            # Try to start again while running
+            result = warmup_module.start_background_warmup(html_root="/tmp/fake")
+            assert result is False
+        finally:
+            stop_event.set()
+            if warmup_module._warmup_thread is not None:
+                warmup_module._warmup_thread.join(timeout=2)
+            warmup_module._warmup_worker = original_worker
+            warmup_module._warmup_thread = None
+
+    def test_run_warmup_sync_returns_status_dict(self):
+        """run_warmup_sync calls worker and returns status dict."""
+        import app.warmup as warmup_module
+
+        original_worker = warmup_module._warmup_worker
+
+        def noop_worker(*args, **kwargs):
+            pass
+
+        warmup_module._warmup_worker = noop_worker
+
+        try:
+            result = warmup_module.run_warmup_sync(
+                html_root="/tmp/fake",
+                max_laws=1,
+            )
+            assert isinstance(result, dict)
+            assert "state" in result
+        finally:
+            warmup_module._warmup_worker = original_worker
+
+
+# ===========================================================================
+# _resolve_html_root
+# ===========================================================================
+
+
+class TestResolveHtmlRoot:
+    """Tests for _resolve_html_root path resolution."""
+
+    def test_explicit_path_string(self):
+        """Explicit string path is returned as Path."""
+        from pathlib import Path
+
+        from app.warmup import _resolve_html_root
+
+        result = _resolve_html_root("/tmp/my/html")
+        assert result == Path("/tmp/my/html")
+
+    def test_explicit_path_object(self):
+        """Explicit Path object is returned as-is."""
+        from pathlib import Path
+
+        from app.warmup import _resolve_html_root
+
+        path = Path("/tmp/test")
+        result = _resolve_html_root(path)
+        assert result == path
+
+    def test_none_uses_config_default(self):
+        """None falls back to config warmup_html_root."""
+        from pathlib import Path
+        from unittest.mock import MagicMock, patch
+
+        from app.warmup import _resolve_html_root
+
+        mock_settings = MagicMock()
+        mock_settings.warmup_html_root = "/config/default/html"
+
+        with patch("app.config.get_settings", return_value=mock_settings):
+            result = _resolve_html_root(None)
+
+        assert result == Path("/config/default/html")
