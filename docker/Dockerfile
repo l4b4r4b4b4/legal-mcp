@@ -26,6 +26,13 @@ COPY --chown=appuser:appuser app/ /app/app/
 # Copy pre-downloaded HTML corpus for warm-up ingestion into ChromaDB
 COPY --chown=appuser:appuser data/html/ /app/data/html/
 
+# Copy pre-computed JSONL embeddings (source of truth, ~500 MB)
+# These are imported into ChromaDB at first boot via import_embeddings.py
+COPY --chown=appuser:appuser data/embeddings/ /app/data/embeddings/
+
+# Copy import script for seeding ChromaDB from portable JSONL files
+COPY --chown=appuser:appuser scripts/import_embeddings.py /app/scripts/import_embeddings.py
+
 # Set default warm-up HTML root to the bundled corpus
 ENV WARMUP_HTML_ROOT="/app/data/html"
 
@@ -45,6 +52,12 @@ COPY --chown=appuser:appuser app/ /app/app/
 
 # Copy pre-downloaded HTML corpus for warm-up ingestion
 COPY --chown=appuser:appuser data/html/ /app/data/html/
+
+# Copy pre-computed JSONL embeddings (source of truth, ~500 MB)
+COPY --chown=appuser:appuser data/embeddings/ /app/data/embeddings/
+
+# Copy import script for seeding ChromaDB from portable JSONL files
+COPY --chown=appuser:appuser scripts/import_embeddings.py /app/scripts/import_embeddings.py
 
 # Set default warm-up HTML root to the bundled corpus
 ENV WARMUP_HTML_ROOT="/app/data/html"
